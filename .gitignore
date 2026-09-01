@@ -3,3 +3,14 @@ dist/
 spec.json
 .DS_Store
 *.log
+*.tsbuildinfo
+
+.env*
+!.env.example
+
+secrets/
+
+.env*
+!.env.example
+
+secrets/

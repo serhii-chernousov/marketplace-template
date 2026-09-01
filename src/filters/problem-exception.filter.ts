@@ -5,7 +5,7 @@ import {
 	HttpException,
 } from '@nestjs/common'
 import { Request, Response } from 'express'
-import { ProblemException } from './problem.exception'
+import { ProblemException } from '../types/problem.exception'
 
 @Catch()
 export class ProblemExceptionFilter implements ExceptionFilter {
@@ -28,13 +28,18 @@ export class ProblemExceptionFilter implements ExceptionFilter {
 				typeof payload === 'string'
 					? payload
 					: (payload as { message?: string | string[] }).message
-			return res.status(status).type('application/problem+json').json({
-				type: `https://marketplace.local/problems/http-${status}`,
-				title: status >= 500 ? 'Internal Server Error' : 'Request Error',
-				status,
-				detail: Array.isArray(detail) ? detail.join('; ') : detail || exception.message,
-				instance: req.originalUrl,
-			})
+			return res
+				.status(status)
+				.type('application/problem+json')
+				.json({
+					type: `https://marketplace.local/problems/http-${status}`,
+					title: status >= 500 ? 'Internal Server Error' : 'Request Error',
+					status,
+					detail: Array.isArray(detail)
+						? detail.join('; ')
+						: detail || exception.message,
+					instance: req.originalUrl,
+				})
 		}
 
 		const err = exception as {
@@ -45,12 +50,15 @@ export class ProblemExceptionFilter implements ExceptionFilter {
 		const status = err.status || err.statusCode || 500
 		const detail = err.message || 'Unexpected error'
 
-		return res.status(status).type('application/problem+json').json({
-			type: `https://marketplace.local/problems/http-${status}`,
-			title: status >= 500 ? 'Internal Server Error' : 'Request Error',
-			status,
-			detail,
-			instance: req.originalUrl,
-		})
+		return res
+			.status(status)
+			.type('application/problem+json')
+			.json({
+				type: `https://marketplace.local/problems/http-${status}`,
+				title: status >= 500 ? 'Internal Server Error' : 'Request Error',
+				status,
+				detail,
+				instance: req.originalUrl,
+			})
 	}
 }

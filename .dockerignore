@@ -1,0 +1,11 @@
+.env
+.git
+.gitignore
+node_modules
+dist
+secrets
+.prettierrc
+.prettierignore
+.vscode
+*.tsbuildinfo
+task.log

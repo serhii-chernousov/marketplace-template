@@ -10,8 +10,8 @@ import {
 	Res,
 } from '@nestjs/common'
 import { Response } from 'express'
-import { ProblemException } from './problem.exception'
-import { StoreService } from './store.service'
+import { ProblemException } from '../types/problem.exception'
+import { StoreService } from '../services/store.service'
 
 @Controller('v1/orders')
 export class OrdersController {
@@ -136,11 +136,13 @@ export class OrdersController {
 			listing.quantity -= item.quantity
 		}
 
-		const orderItems = resolvedItems.map(({ listing_id, quantity, price_cents }) => ({
-			listing_id,
-			quantity,
-			price_cents,
-		}))
+		const orderItems = resolvedItems.map(
+			({ listing_id, quantity, price_cents }) => ({
+				listing_id,
+				quantity,
+				price_cents,
+			}),
+		)
 		const total_cents = orderItems.reduce(
 			(sum, item) => sum + item.price_cents * item.quantity,
 			0,

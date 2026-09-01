@@ -5,28 +5,37 @@
   "description": "Marketplace API — OpenAPI contract + NestJS runtime validation (hw-09, variant B)",
   "scripts": {
     "build": "nest build",
-    "start": "nest start",
+    "start": "npm run build && node dist/main.js",
     "start:dev": "nest start --watch",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "lint:openapi": "npx @redocly/cli@2.46.0 lint openapi/openapi.yaml",
-    "bundle:openapi": "npx @redocly/cli@2.46.0 bundle openapi/openapi.yaml -o spec.json"
+    "bundle:openapi": "npx @redocly/cli@2.46.0 bundle openapi/openapi.yaml -o spec.json",
+    "check:env": "node scripts/check-env-example.mjs"
   },
   "engines": {
     "node": ">=18"
   },
   "dependencies": {
     "@nestjs/common": "^11.1.6",
+    "@nestjs/config": "^12.0.0",
     "@nestjs/core": "^11.1.6",
     "@nestjs/platform-express": "^11.1.6",
     "express": "4.22.2",
     "express-openapi-validator": "5.6.2",
+    "pg": "^8.23.0",
     "reflect-metadata": "^0.2.2",
-    "rxjs": "^7.8.2"
+    "rxjs": "^7.8.2",
+    "zod": "^4.5.4"
   },
   "devDependencies": {
     "@nestjs/cli": "^11.0.10",
     "@redocly/cli": "2.46.0",
     "@types/express": "^4.17.23",
     "@types/node": "^22.17.2",
+    "@types/pg": "^8.23.1",
+    "dotenv": "^16.6.1",
+    "prettier": "^3.9.6",
     "typescript": "^5.9.2"
   }
 }

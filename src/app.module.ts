@@ -1,13 +1,29 @@
-import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common'
+import {
+	MiddlewareConsumer,
+	Module,
+	NestModule,
+	RequestMethod,
+} from '@nestjs/common'
 import * as OpenApiValidator from 'express-openapi-validator'
 import { join } from 'path'
-import { ListingsController } from './listings.controller'
-import { OrdersController } from './orders.controller'
-import { StoreService } from './store.service'
+import { StoreService } from './services/store.service'
+import { ConfigModule } from '@nestjs/config'
+import { validate } from './config/env.schema'
+import { ListingsController } from './controllers/listings.controller'
+import { OrdersController } from './controllers/orders.controller'
+import { HealthController } from './controllers/health.controller'
+import { DbService } from './services/db.service'
 
 @Module({
-	controllers: [ListingsController, OrdersController],
-	providers: [StoreService],
+	imports: [
+		ConfigModule.forRoot({
+			isGlobal: true,
+			validate,
+			envFilePath: '.env',
+		}),
+	],
+	providers: [StoreService, DbService],
+	controllers: [ListingsController, OrdersController, HealthController],
 })
 export class AppModule implements NestModule {
 	configure(consumer: MiddlewareConsumer) {
@@ -18,6 +34,10 @@ export class AppModule implements NestModule {
 					validateRequests: true,
 					validateResponses: true,
 				}),
+			)
+			.exclude(
+				{ path: 'health', method: RequestMethod.GET },
+				{ path: 'db', method: RequestMethod.GET },
 			)
 			.forRoutes('*')
 	}

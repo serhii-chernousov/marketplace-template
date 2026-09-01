@@ -74,7 +74,11 @@ export class StoreService {
 		}
 	}
 
-	paginate<T extends { id: string }>(items: T[], limit?: number, cursor?: string) {
+	paginate<T extends { id: string }>(
+		items: T[],
+		limit?: number,
+		cursor?: string,
+	) {
 		const pageSize = limit ?? 20
 		let start = 0
 		if (cursor) {

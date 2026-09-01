@@ -21,6 +21,47 @@ npm start
 
 Сервер: `http://localhost:3000`
 
+## Configuration
+
+Змінні описує Zod-схема `src/config/env.schema.ts`. Контракт для git — `.env.example`; реальний `.env` у `.gitignore` і не потрапляє в Docker-образ. Пароль БД **не** в env: лише файл `secrets/db_password`.
+
+| Змінна       | Обов'язкова        | Опис                                          |
+| ------------ | ------------------ | --------------------------------------------- |
+| `PORT`       | так                | HTTP-порт                                     |
+| `DB_HOST`    | так                | Хост Postgres (`localhost` для Nest на хості) |
+| `DB_PORT`    | так                | Порт Postgres                                 |
+| `DB_USER`    | так                | Роль застосунку (`app_user`)                  |
+| `DB_NAME`    | так                | Ім'я бази (`shop`)                            |
+| `LOG_LEVEL`  | ні (дефолт `info`) | `debug` \| `info` \| `warn` \| `error`        |
+| `TIMEOUT_MS` | ні (дефолт `5000`) | Таймаут у мс                                  |
+
+### Локальний запуск з БД
+
+```bash
+cp .env.example .env
+mkdir -p secrets
+printf '%s' 'app-secret-initial' > secrets/db_password
+docker compose up -d db
+npm start
+```
+
+Перевірка: `curl -s localhost:3000/health` і `curl -s localhost:3000/db`.
+
+Після `docker compose down -v` Postgres знову з паролем з `db/init.sql`. Поверни той самий рядок у `secrets/db_password`, інакше `password authentication failed`.
+
+### Ротація пароля без рестарту
+
+Порядок у `rotate.sh` фіксований: `ALTER ROLE` → оновити файл → `pg_terminate_backend`.
+
+```bash
+curl -s localhost:3000/health
+bash rotate.sh
+curl -s localhost:3000/db
+curl -s localhost:3000/health
+```
+
+Uptime має зрости: процес Nest не перезапускається. Нові з'єднання читають уже новий пароль з файлу.
+
 ## Перевірки (acceptance criteria)
 
 ```bash

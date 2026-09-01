@@ -1,0 +1,467 @@
+openapi: 3.0.3
+info:
+  title: Marketplace API
+  version: 1.0.0
+  description: Контракт Marketplace API (курсовий проєкт, hw-09).
+servers:
+  - url: http://localhost:3000/v1
+security: []
+paths:
+  /listings:
+    get:
+      operationId: listListings
+      summary: Список активних оголошень
+      description: Повертає лише active-оголошення з cursor-пагінацією.
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Сторінка оголошень
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListingListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+    post:
+      operationId: createListing
+      summary: Створити оголошення
+      description: Доступно лише продавцю (роль seller). Повертає Location створеного ресурсу.
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/UserRole'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateListingRequest'
+      responses:
+        '201':
+          description: Оголошення створено
+          headers:
+            Location:
+              description: URI створеного оголошення
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Listing'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /listings/{id}:
+    get:
+      operationId: getListing
+      summary: Отримати оголошення за id
+      parameters:
+        - $ref: '#/components/parameters/ListingId'
+      responses:
+        '200':
+          description: Оголошення
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListingPublic'
+        '404':
+          description: Оголошення не знайдено
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              example:
+                type: https://marketplace.local/problems/listing-not-found
+                title: Listing not found
+                status: 404
+                detail: Listing with the given id does not exist
+                instance: /v1/listings/unknown
+    patch:
+      operationId: updateListing
+      summary: Оновити власне оголошення
+      description: Лише власник оголошення може змінювати його. Чужий продавець отримує 403.
+      parameters:
+        - $ref: '#/components/parameters/ListingId'
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/UserRole'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateListingRequest'
+      responses:
+        '200':
+          description: Оновлене оголошення
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Listing'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: Оголошення не знайдено
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /orders:
+    get:
+      operationId: listOrders
+      summary: Список замовлень
+      description: >
+        Для buyer — власні замовлення.
+        Для seller — замовлення, що містять лоти цього продавця.
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/UserRole'
+      responses:
+        '200':
+          description: Сторінка замовлень
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      operationId: createOrder
+      summary: Створити замовлення
+      description: Створення замовлення покупцем. Потрібен Idempotency-Key.
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/UserRole'
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: >
+            Ключ ідемпотентності створення. Той самий ключ і те саме тіло запиту
+            повертають ту саму відповідь (повтор безпечний). Той самий ключ з іншим
+            тілом — конфлікт семантики (422).
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateOrderRequest'
+      responses:
+        '201':
+          description: Замовлення створено
+          headers:
+            Location:
+              description: URI створеного замовлення
+              schema:
+                type: string
+            Idempotency-Replay:
+              description: true, якщо відповідь відтворена з кешу ідемпотентності
+              schema:
+                type: string
+                enum: ['true']
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: Оголошення з позиції замовлення не знайдено
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          description: Недостатньо товару на складі
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              example:
+                type: https://marketplace.local/problems/out-of-stock
+                title: Out of stock
+                status: 409
+                detail: One or more listings do not have enough quantity
+                instance: /v1/orders
+        '422':
+          description: Різні продавці в одному замовленні або конфлікт Idempotency-Key
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              example:
+                type: https://marketplace.local/problems/mixed-seller-order
+                title: Mixed seller order
+                status: 422
+                detail: All order items must belong to the same seller
+                instance: /v1/orders
+  /orders/{id}:
+    get:
+      operationId: getOrder
+      summary: Отримати замовлення за id
+      description: Доступно покупцю цього замовлення або продавцю лотів у ньому.
+      parameters:
+        - $ref: '#/components/parameters/OrderId'
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/UserRole'
+      responses:
+        '200':
+          description: Замовлення
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: Замовлення не знайдено
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+components:
+  parameters:
+    Limit:
+      name: limit
+      in: query
+      required: false
+      description: Максимальна кількість елементів на сторінці
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      description: Непрозорий токен пагінації з попередньої відповіді (next_cursor)
+      schema:
+        type: string
+    ListingId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    OrderId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    UserId:
+      name: X-User-Id
+      in: header
+      required: true
+      description: Ідентифікатор поточного користувача (тимчасовий замінник auth)
+      schema:
+        type: string
+        minLength: 1
+    UserRole:
+      name: X-User-Role
+      in: header
+      required: true
+      description: Роль користувача (buyer або seller)
+      schema:
+        type: string
+        enum: [buyer, seller]
+  responses:
+    BadRequest:
+      description: Невалідний запит
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Forbidden:
+      description: Доступ заборонено
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+  schemas:
+    Problem:
+      type: object
+      required: [type, title, status, detail, instance]
+      additionalProperties: false
+      properties:
+        type:
+          type: string
+          format: uri
+          description: URI типу помилки
+        title:
+          type: string
+          description: Коротка назва помилки
+        status:
+          type: integer
+          description: HTTP-код
+        detail:
+          type: string
+          description: Що саме пішло не так
+        instance:
+          type: string
+          description: Посилання на конкретний випадок
+    ListingPublic:
+      type: object
+      required: [id, title, price_cents, status, seller_id]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        price_cents:
+          type: integer
+          minimum: 1
+          description: Ціна в копійках (ціле число)
+        status:
+          type: string
+          enum: [active, archived]
+        seller_id:
+          type: string
+    Listing:
+      type: object
+      required: [id, title, price_cents, status, seller_id, quantity]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        price_cents:
+          type: integer
+          minimum: 1
+        status:
+          type: string
+          enum: [active, archived]
+        seller_id:
+          type: string
+        quantity:
+          type: integer
+          minimum: 0
+    CreateListingRequest:
+      type: object
+      required: [title, price_cents, quantity]
+      additionalProperties: false
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+        price_cents:
+          type: integer
+          minimum: 1
+        quantity:
+          type: integer
+          minimum: 1
+    UpdateListingRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+        price_cents:
+          type: integer
+          minimum: 1
+        quantity:
+          type: integer
+          minimum: 0
+        status:
+          type: string
+          enum: [active, archived]
+    ListingListResponse:
+      type: object
+      required: [items, next_cursor]
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ListingPublic'
+        next_cursor:
+          type: string
+          nullable: true
+          description: Непрозорий токен наступної сторінки; null — сторінок більше немає
+    OrderItem:
+      type: object
+      required: [listing_id, quantity, price_cents]
+      additionalProperties: false
+      properties:
+        listing_id:
+          type: string
+        quantity:
+          type: integer
+          minimum: 1
+        price_cents:
+          type: integer
+          minimum: 1
+    Order:
+      type: object
+      required: [id, buyer_id, seller_id, items, total_cents, status]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+        buyer_id:
+          type: string
+        seller_id:
+          type: string
+        items:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/OrderItem'
+        total_cents:
+          type: integer
+          minimum: 1
+          description: Сума в копійках (ціле число)
+        status:
+          type: string
+          enum: [created, paid, cancelled]
+    CreateOrderRequest:
+      type: object
+      required: [items]
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [listing_id, quantity]
+            additionalProperties: false
+            properties:
+              listing_id:
+                type: string
+                minLength: 1
+              quantity:
+                type: integer
+                minimum: 1
+    OrderListResponse:
+      type: object
+      required: [items, next_cursor]
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Order'
+        next_cursor:
+          type: string
+          nullable: true
+          description: Непрозорий токен наступної сторінки; null — сторінок більше немає

@@ -9,8 +9,3 @@ spec.json
 !.env.example
 
 secrets/
-
-.env*
-!.env.example
-
-secrets/

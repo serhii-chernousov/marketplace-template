@@ -21,7 +21,7 @@ export class DbService implements OnModuleDestroy {
 		})
 
 		this.pool.on('error', (err) => {
-			console.error(err)
+			console.error(err.message)
 		})
 	}
 

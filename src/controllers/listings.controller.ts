@@ -11,18 +11,15 @@ import {
 	Res,
 } from '@nestjs/common'
 import { Response } from 'express'
-import { ProblemException } from './problem.exception'
-import { StoreService } from './store.service'
+import { ProblemException } from '../types/problem.exception'
+import { StoreService } from '../services/store.service'
 
 @Controller('v1/listings')
 export class ListingsController {
 	constructor(private readonly store: StoreService) {}
 
 	@Get()
-	list(
-		@Query('limit') limit?: string,
-		@Query('cursor') cursor?: string,
-	) {
+	list(@Query('limit') limit?: string, @Query('cursor') cursor?: string) {
 		const active = [...this.store.listings.values()]
 			.filter((l) => l.status === 'active')
 			.map((l) => this.store.toPublicListing(l))

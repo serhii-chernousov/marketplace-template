@@ -1,0 +1,17 @@
+{
+	"semi": false,
+	"singleQuote": true,
+	"useTabs": true,
+	"trailingComma": "all",
+	"printWidth": 80,
+	"endOfLine": "lf",
+	"overrides": [
+		{
+			"files": ["*.json", "*.yaml", "*.yml", "*.md"],
+			"options": {
+				"useTabs": false,
+				"tabWidth": 2
+			}
+		}
+	]
+}

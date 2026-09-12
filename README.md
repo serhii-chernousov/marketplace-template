@@ -1,6 +1,6 @@
-# Marketplace API (hw-09)
+# Marketplace API (hw-12)
 
-# Ресурси
+## Ресурси
 
 - `GET/POST /v1/listings`, `GET/PATCH /v1/listings/{id}`
 - `GET/POST /v1/orders`, `GET /v1/orders/{id}`
@@ -23,7 +23,7 @@ npm start
 
 ## Configuration
 
-Змінні описує Zod-схема `src/config/env.schema.ts`. Контракт для git — `.env.example`; реальний `.env` у `.gitignore` і не потрапляє в Docker-образ. Пароль БД **не** в env: лише файл `secrets/db_password`.
+Змінні описує Zod-схема `src/config/env.schema.ts`. Контракт для git — `.env.example`; реальний `.env` у `.gitignore` і не потрапляє в Docker-образ. Живий пароль БД і рядок підключення — у **сховищі** `secrets/db_password`, не в новому env-файлі. У `.env.example` для `DB_URL` стоїть фейковий пароль.
 
 | Змінна       | Обов'язкова        | Опис                                          |
 | ------------ | ------------------ | --------------------------------------------- |
@@ -32,8 +32,47 @@ npm start
 | `DB_PORT`    | так                | Порт Postgres                                 |
 | `DB_USER`    | так                | Роль застосунку (`app_user`)                  |
 | `DB_NAME`    | так                | Ім'я бази (`shop`)                            |
+| `DB_URL`     | так                | Рядок підключення; джерело — сховище          |
 | `LOG_LEVEL`  | ні (дефолт `info`) | `debug` \| `info` \| `warn` \| `error`        |
 | `TIMEOUT_MS` | ні (дефолт `5000`) | Таймаут у мс                                  |
+
+## Postgres (ДЗ #12)
+
+Головна таблиця: `orders`.
+
+Підняти базу:
+
+```bash
+docker compose up -d --wait
+```
+
+Підключитись:
+
+```bash
+docker compose exec db psql -U admin -d shop -Atc "SELECT 1"
+```
+
+Схема **не** монтується в `docker-entrypoint-initdb.d` — грейдер застосовує файли сам. Дев-креденшели контейнера (`admin` / `admin-secret` / `shop`) задані в `docker-compose.yaml`; пароль ролі `app_user` для Nest — у сховищі (`secrets/db_password`, приклад — `secrets/db_password.example`).
+
+Прогін на чистому volume:
+
+```bash
+docker compose down -v
+docker compose up -d --wait
+docker compose exec -T db psql -U admin -d shop -v ON_ERROR_STOP=1 < db/schema.sql
+docker compose exec -T db psql -U admin -d shop -v ON_ERROR_STOP=1 < db/seed.sql
+docker compose exec -T db psql -U admin -d shop -Atc "SELECT count(*) FROM orders;"
+docker compose exec -T db psql -U admin -d shop -c "EXPLAIN (ANALYZE, BUFFERS) $(cat db/queries/q1.sql)"
+docker compose exec -T db psql -U admin -d shop -c "EXPLAIN (ANALYZE, BUFFERS) $(cat db/queries/q2.sql)"
+docker compose exec -T db psql -U admin -d shop -c "EXPLAIN (ANALYZE, BUFFERS) $(cat db/queries/q3.sql)"
+docker compose exec -T db psql -U admin -d shop -v ON_ERROR_STOP=1 < db/indexes.sql
+docker compose exec -T db psql -U admin -d shop -c "ANALYZE;"
+docker compose exec -T db psql -U admin -d shop -c "EXPLAIN (ANALYZE, BUFFERS) $(cat db/queries/q1.sql)"
+docker compose exec -T db psql -U admin -d shop -c "EXPLAIN (ANALYZE, BUFFERS) $(cat db/queries/q2.sql)"
+docker compose exec -T db psql -U admin -d shop -c "EXPLAIN (ANALYZE, BUFFERS) $(cat db/queries/q3.sql)"
+```
+
+До `indexes.sql` кожен EXPLAIN має містити `Seq Scan`. Після — `Index Scan`, `Index Only Scan` або `Bitmap Index Scan`, без `Seq Scan`.
 
 ### Локальний запуск з БД
 

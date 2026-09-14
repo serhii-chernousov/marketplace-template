@@ -20,22 +20,29 @@ SELECT
 FROM generate_series(1, 20) AS s(i);
 
 -- 100k rows so q3 (lower(name)) is not a Seq Scan on a tiny table.
--- Mix of case on a few titles so q3 can use lower(name) with real selectivity.
+-- Name frequencies via random(): long tail of unique titles, a few shared
+-- names at different rarities. 'vintage lamp' is ~0.045% so the expression
+-- index is selective; i % N would paint it evenly across the heap.
 INSERT INTO products (seller_id, category_id, name, description, price, stock, is_active)
 SELECT
 	((i - 1) % 200) + 1,
 	((i - 1) % 20) + 1,
 	CASE
-		WHEN i % 80 = 0 THEN 'Vintage Lamp'
-		WHEN i % 80 = 1 THEN 'VINTAGE LAMP'
-		WHEN i % 80 = 2 THEN 'vintage lamp'
+		WHEN r < 0.00015 THEN 'Vintage Lamp'
+		WHEN r < 0.00030 THEN 'VINTAGE LAMP'
+		WHEN r < 0.00045 THEN 'vintage lamp'
+		WHEN r < 0.003 THEN 'Ceramic Mug'
+		WHEN r < 0.02 THEN 'Wooden Chair'
 		ELSE 'Product ' || i
 	END,
 	'Description for product ' || i,
-	round((10 + random() * 990)::numeric, 2),
-	(random() * 100)::integer,
-	(random() > 0.10)
-FROM generate_series(1, 100000) AS s(i);
+	round((10 + r_price * 990)::numeric, 2),
+	(r_stock * 100)::integer,
+	(r_active > 0.10)
+FROM (
+	SELECT i, random() AS r, random() AS r_price, random() AS r_stock, random() AS r_active
+	FROM generate_series(1, 100000) AS s(i)
+) AS src;
 
 -- Skewed statuses, dates spread over a year.
 -- random() must sit in the same FROM as generate_series; LATERAL without

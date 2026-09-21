@@ -11,7 +11,13 @@
     "format:check": "prettier --check .",
     "lint:openapi": "npx @redocly/cli@2.46.0 lint openapi/openapi.yaml",
     "bundle:openapi": "npx @redocly/cli@2.46.0 bundle openapi/openapi.yaml -o spec.json",
-    "check:env": "node scripts/check-env-example.mjs"
+    "check:env": "node scripts/check-env-example.mjs",
+    "migrate": "bash scripts/with-secrets.sh dev node ./node_modules/typeorm/cli.js migration:run -d dist/data-source.js",
+    "migrate:show": "bash scripts/with-secrets.sh dev node ./node_modules/typeorm/cli.js migration:show -d dist/data-source.js",
+    "migrate:revert": "bash scripts/with-secrets.sh dev node ./node_modules/typeorm/cli.js migration:revert -d dist/data-source.js",
+    "seed": "bash scripts/with-secrets.sh dev node dist/seed.js",
+    "demo:nplus1": "bash scripts/with-secrets.sh dev node dist/demo-nplus1.js",
+    "report": "bash scripts/with-secrets.sh dev node dist/report.js"
   },
   "engines": {
     "node": ">=18"
@@ -26,6 +32,7 @@
     "pg": "^8.23.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2",
+    "typeorm": "^0.3.31",
     "zod": "^4.5.4"
   },
   "devDependencies": {

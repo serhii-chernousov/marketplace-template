@@ -5,7 +5,7 @@
 - `GET/POST /v1/listings`, `GET/PATCH /v1/listings/{id}`
 - `GET/POST /v1/orders`, `GET /v1/orders/{id}`
 
-Гроші — цілі копійки (`price_cents`, `total_cents`). Ідентифікація користувача — тимчасові заголовки `X-User-Id` і `X-User-Role` (`buyer` | `seller`).
+Гроші — цілі копійки в API (`price_cents`, `total_cents`) і в SQL (`products.price_cents`, `orders.total_cents`, `order_items.unit_price_cents`). Ідентифікація користувача — тимчасові заголовки `X-User-Id` і `X-User-Role` (`buyer` | `seller`).
 
 ## Встановлення
 
@@ -38,7 +38,7 @@ npm start
 
 ## Postgres (ДЗ #12)
 
-Головна таблиця: `orders`.
+Головна таблиця: `orders`. Гроші в таблицях — `integer` у копійках (`price_cents`, `total_cents`, `unit_price_cents`), не `numeric`/`float`.
 
 Підняти базу:
 

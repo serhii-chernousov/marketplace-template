@@ -1,11 +1,11 @@
-# Marketplace API (hw-12)
+# Marketplace API (hw-13)
 
 ## Ресурси
 
 - `GET/POST /v1/listings`, `GET/PATCH /v1/listings/{id}`
 - `GET/POST /v1/orders`, `GET /v1/orders/{id}`
 
-Гроші — цілі копійки (`price_cents`, `total_cents`). Ідентифікація користувача — тимчасові заголовки `X-User-Id` і `X-User-Role` (`buyer` | `seller`).
+Гроші — цілі копійки в API (`price_cents`, `total_cents`) і в SQL (`products.price_cents`, `orders.total_cents`, `order_items.unit_price_cents`). Ідентифікація користувача — тимчасові заголовки `X-User-Id` і `X-User-Role` (`buyer` | `seller`).
 
 ## Встановлення
 
@@ -23,22 +23,25 @@ npm start
 
 ## Configuration
 
-Змінні описує Zod-схема `src/config/env.schema.ts`. Контракт для git — `.env.example`; реальний `.env` у `.gitignore` і не потрапляє в Docker-образ. Живий пароль БД і рядок підключення — у **сховищі** `secrets/db_password`, не в новому env-файлі. У `.env.example` для `DB_URL` стоїть фейковий пароль.
+Змінні описує Zod-схема `src/config/env.schema.ts`. Контракт для git — `.env.example`; реальний `.env` у `.gitignore` і не потрапляє в Docker-образ. У `.env.example` паролі фейкові.
 
-| Змінна       | Обов'язкова        | Опис                                          |
-| ------------ | ------------------ | --------------------------------------------- |
-| `PORT`       | так                | HTTP-порт                                     |
-| `DB_HOST`    | так                | Хост Postgres (`localhost` для Nest на хості) |
-| `DB_PORT`    | так                | Порт Postgres                                 |
-| `DB_USER`    | так                | Роль застосунку (`app_user`)                  |
-| `DB_NAME`    | так                | Ім'я бази (`shop`)                            |
-| `DB_URL`     | так                | Рядок підключення; джерело — сховище          |
-| `LOG_LEVEL`  | ні (дефолт `info`) | `debug` \| `info` \| `warn` \| `error`        |
-| `TIMEOUT_MS` | ні (дефолт `5000`) | Таймаут у мс                                  |
+TypeORM (`src/data-source.ts`) читає `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME` з `process.env` — їх треба тримати в Infisical `dev` (основний шлях: `infisical run`). Nest HTTP досі бере пароль з файлу `secrets/db_password` (ДЗ #11), не з `DB_PASSWORD`.
+
+| Змінна        | Обов'язкова        | Опис                                                                 |
+| ------------- | ------------------ | -------------------------------------------------------------------- |
+| `PORT`        | так                | HTTP-порт                                                            |
+| `DB_HOST`     | так                | Хост Postgres (`localhost` для Nest на хості)                        |
+| `DB_PORT`     | так                | Порт Postgres                                                        |
+| `DB_USER`     | так                | Роль застосунку (`app_user`) або `admin` для CLI грейдера             |
+| `DB_PASSWORD` | так                | Пароль для TypeORM DataSource (`migrate` / `seed` / `demo` / `report`) |
+| `DB_NAME`     | так                | Ім'я бази (`shop`)                                                   |
+| `DB_URL`      | так                | Рядок підключення Nest; джерело — сховище                            |
+| `LOG_LEVEL`   | ні (дефолт `info`) | `debug` \| `info` \| `warn` \| `error`                               |
+| `TIMEOUT_MS`  | ні (дефолт `5000`) | Таймаут у мс                                                         |
 
 ## Postgres (ДЗ #12)
 
-Головна таблиця: `orders`.
+Головна таблиця: `orders`. Гроші в таблицях — `integer` у копійках (`price_cents`, `total_cents`, `unit_price_cents`), не `numeric`/`float`.
 
 Підняти базу:
 
@@ -149,3 +152,75 @@ curl -s -i -X POST http://localhost:3000/v1/orders \
 ```
 
 Повтор того самого `Idempotency-Key` + тіла → знову `201` з заголовком `Idempotency-Replay: true`. Той самий ключ з іншим тілом → `422` problem+json.
+
+## TypeORM (ДЗ #13)
+
+DataSource: `src/data-source.ts`. `synchronize: false` — схему змінюють лише міграції.
+
+Локально (секрети вже в оточенні, як у CI):
+
+```bash
+docker compose up -d --wait
+export DB_HOST=127.0.0.1 DB_PORT=5432 DB_USER=admin DB_PASSWORD=admin-secret DB_NAME=shop
+export SKIP_VAULT=1
+npm run build
+npm run migrate
+npm run seed
+npm run demo:nplus1
+npm run report
+```
+
+Основний шлях — `bash scripts/with-secrets.sh dev …` усередині npm-скриптів (`infisical run`). У Infisical env `dev` мають бути щонайменше `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`. Файл `.secrets/infisical.env` у git немає (і не повинен). `SKIP_VAULT=1` лише обходить CLI сховища, коли ці змінні вже є в env (грейдер / локальний compose).
+
+Nest runtime досі ходить у базу через `pg.Pool` (`DbService`); TypeORM живе в CLI-скриптах. Транзакції ДЗ #14 варто писати вже поверх `QueryRunner`, не розширюючи сирий Pool.
+
+### onDelete
+
+- `RESTRICT` — `products.seller_id`, `orders.user_id`, `order_items.product_id`: історію замовлень і каталог не можна стерти разом із користувачем чи товаром.
+- `CASCADE` — `order_items.order_id`: позиції не існують без замовлення.
+- `SET NULL` — `products.category_id`: категорію можна прибрати, товар лишається.
+
+### N+1 (order → items → product)
+
+`npm run demo:nplus1` бере N з argv (`npm run demo:nplus1 -- 3 24`). Без аргументів — `min(3, count(*))` і повний `count(*)` замовлень, тож на базі з 24 рядками саме доводиться незалежність від N.
+
+На сиді з 6 замовленнями (без argv):
+
+| Стратегія | N=3 | N=6 |
+| --- | --- | --- |
+| наївно (запит у циклі) | 9 | 15 (≥ N) |
+| relations / leftJoinAndSelect | 1 | 1 |
+| relationLoadStrategy: `query` | 5 | 5 |
+
+`before=15 after=1`. Після фіксу число не росте з N і ≤ `1 + 2 × рівнів` (два рівні: items і product → 5).
+
+### Repository vs QueryBuilder
+
+`find()` / Repository — коли потрібна сутність (або граф) за PK, унікальним ключем чи простим where. QueryBuilder — коли запит не мапиться на один entity: агрегати, `GROUP BY`, звіт «виторг по категоріях» (`SUM(quantity * unit_price_cents)`). `getRawMany()` повертає рядки; `SUM` приходить рядком (`bigint`). Товари з `category_id IS NULL` (після `ON DELETE SET NULL`) потрапляють у бакет `uncategorized` через `leftJoin`, не зникають з виторгу.
+
+### Seed
+
+Ідемпотентний: `npm run seed && npm run seed` не змінює кількість рядків.
+
+```bash
+docker compose exec -T db psql -U admin -d shop -c "SELECT 'users' AS t, count(*) FROM users UNION ALL SELECT 'categories', count(*) FROM categories UNION ALL SELECT 'products', count(*) FROM products UNION ALL SELECT 'orders', count(*) FROM orders UNION ALL SELECT 'order_items', count(*) FROM order_items;"
+```
+
+Очікувано: users 8, categories 6, products 8, orders 6, order_items 8.
+
+## Grading
+
+```bash
+docker compose up -d --wait
+export DB_HOST=127.0.0.1 DB_PORT=5432 DB_USER=admin DB_PASSWORD=admin-secret DB_NAME=shop
+export SKIP_VAULT=1    # у грейдера немає доступу до сховища
+npm ci && npx tsc --noEmit
+npm run build
+npm run migrate
+npm run migrate:show
+npm run migrate:revert && npm run migrate
+npm run seed && npm run seed
+npm run demo:nplus1
+npm run report
+```
+

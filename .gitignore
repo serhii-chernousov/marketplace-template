@@ -11,3 +11,5 @@ spec.json
 secrets/*
 !secrets/*.example
 
+.secrets/
+

@@ -23,7 +23,7 @@ FROM generate_series(1, 20) AS s(i);
 -- Name frequencies via random(): long tail of unique titles, a few shared
 -- names at different rarities. 'vintage lamp' is ~0.045% so the expression
 -- index is selective; i % N would paint it evenly across the heap.
-INSERT INTO products (seller_id, category_id, name, description, price, stock, is_active)
+INSERT INTO products (seller_id, category_id, name, description, price_cents, stock, is_active)
 SELECT
 	((i - 1) % 200) + 1,
 	((i - 1) % 20) + 1,
@@ -36,7 +36,7 @@ SELECT
 		ELSE 'Product ' || i
 	END,
 	'Description for product ' || i,
-	round((10 + r_price * 990)::numeric, 2),
+	(1000 + trunc(r_price * 99000))::integer,
 	(r_stock * 100)::integer,
 	(r_active > 0.10)
 FROM (
@@ -47,7 +47,7 @@ FROM (
 -- Skewed statuses, dates spread over a year.
 -- random() must sit in the same FROM as generate_series; LATERAL without
 -- a correlation is folded to a single value and every row gets one status.
-INSERT INTO orders (user_id, status, total_amount, created_at)
+INSERT INTO orders (user_id, status, total_cents, created_at)
 SELECT
 	((i - 1) % 799) + 201,
 	CASE
@@ -65,21 +65,21 @@ FROM (
 ) AS src;
 
 -- One item per order; every third order gets a second item with a different product_id.
-INSERT INTO order_items (order_id, product_id, quantity, unit_price)
+INSERT INTO order_items (order_id, product_id, quantity, unit_price_cents)
 SELECT
 	o.id,
 	p.id,
 	(n % 3) + 1,
-	p.price
+	p.price_cents
 FROM orders AS o
 CROSS JOIN generate_series(1, 2) AS n
 JOIN products AS p ON p.id = ((o.id + n - 2) % 100000) + 1
 WHERE n = 1 OR o.id % 3 = 0;
 
 UPDATE orders AS o
-SET total_amount = s.total
+SET total_cents = s.total
 FROM (
-	SELECT order_id, sum(quantity * unit_price) AS total
+	SELECT order_id, sum(quantity * unit_price_cents) AS total
 	FROM order_items
 	GROUP BY order_id
 ) AS s

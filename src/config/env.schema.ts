@@ -5,6 +5,7 @@ export const envSchema = z.object({
 	DB_HOST: z.string().min(1),
 	DB_PORT: z.coerce.number().int().min(1).max(65535),
 	DB_USER: z.string().min(1),
+	DB_PASSWORD: z.string().min(1),
 	DB_NAME: z.string().min(1),
 	DB_URL: z.string().min(1),
 	LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),

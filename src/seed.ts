@@ -165,7 +165,7 @@ const ORDERS: OrderSeed[] = [
 ]
 
 /**
- * Deterministic, idempotent seed: unique keys are email, slug, product name,
+ * Deterministic, idempotent seed: unique keys are email, slug, products.name,
  * (buyer email + createdAt), (order, product). Second run does not duplicate.
  */
 async function seed(): Promise<void> {
@@ -192,25 +192,16 @@ async function seed(): Promise<void> {
 		if (!seller || !category) {
 			throw new Error(`Missing seller or category for ${row.name}`)
 		}
-		const existing = await productRepo.findOne({ where: { name: row.name } })
-		if (existing) {
-			existing.description = row.description
-			existing.priceCents = row.priceCents
-			existing.stock = row.stock
-			existing.seller = seller
-			existing.category = category
-			await productRepo.save(existing)
-			continue
-		}
-		await productRepo.save(
-			productRepo.create({
+		await productRepo.upsert(
+			{
 				name: row.name,
 				description: row.description,
 				priceCents: row.priceCents,
 				stock: row.stock,
 				seller,
 				category,
-			}),
+			},
+			['name'],
 		)
 	}
 

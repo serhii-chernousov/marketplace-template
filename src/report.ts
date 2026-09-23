@@ -9,7 +9,8 @@ interface RevenueRow {
 
 /**
  * Revenue by category for paid/shipped/delivered orders.
- * Cannot be expressed as Repository.find(): needs JOIN + SUM + GROUP BY.
+ * leftJoin keeps products after category SET NULL; NULL category_id
+ * falls into the uncategorized bucket.
  */
 async function report(): Promise<void> {
 	await dataSource.initialize()
@@ -18,20 +19,23 @@ async function report(): Promise<void> {
 			.getRepository(OrderItem)
 			.createQueryBuilder('item')
 			.innerJoin('item.product', 'product')
-			.innerJoin('product.category', 'category')
+			.leftJoin('product.category', 'category')
 			.innerJoin('item.order', 'ord')
-			.select('category.slug', 'slug')
-			.addSelect('category.title', 'title')
+			.select("COALESCE(category.slug, 'uncategorized')", 'slug')
+			.addSelect("COALESCE(category.title, 'Uncategorized')", 'title')
 			.addSelect('SUM(item.quantity * item.unitPriceCents)', 'revenue_cents')
 			.where('ord.status IN (:...statuses)', {
 				statuses: ['paid', 'shipped', 'delivered'],
 			})
-			.groupBy('category.slug')
-			.addGroupBy('category.title')
+			.groupBy("COALESCE(category.slug, 'uncategorized')")
+			.addGroupBy("COALESCE(category.title, 'Uncategorized')")
 			.orderBy('revenue_cents', 'DESC')
 			.getRawMany<RevenueRow>()
 
 		console.log('revenue by category (paid|shipped|delivered)')
+		console.log(
+			'uncategorized = products.category_id IS NULL (ON DELETE SET NULL)',
+		)
 		for (const row of rows) {
 			const cents = Number(row.revenue_cents)
 			const hryvnias = (cents / 100).toFixed(2)

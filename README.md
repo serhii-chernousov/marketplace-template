@@ -182,7 +182,9 @@ Nest runtime досі ходить у базу через `pg.Pool` (`DbService`
 
 ### N+1 (order → items → product)
 
-Заміряно скриптом `npm run demo:nplus1` на вибірках N=3 і N=6 (сидові 6 замовлень).
+`npm run demo:nplus1` бере N з argv (`npm run demo:nplus1 -- 3 24`). Без аргументів — `min(3, count(*))` і повний `count(*)` замовлень, тож на базі з 24 рядками саме доводиться незалежність від N.
+
+На сиді з 6 замовленнями (без argv):
 
 | Стратегія | N=3 | N=6 |
 | --- | --- | --- |
@@ -194,7 +196,7 @@ Nest runtime досі ходить у базу через `pg.Pool` (`DbService`
 
 ### Repository vs QueryBuilder
 
-`find()` / Repository — коли потрібна сутність (або граф) за PK, унікальним ключем чи простим where. QueryBuilder — коли запит не мапиться на один entity: агрегати, `GROUP BY`, звіт «виторг по категоріях» (`SUM(quantity * unit_price_cents)`). `getRawMany()` повертає рядки; `SUM` приходить рядком (`bigint`).
+`find()` / Repository — коли потрібна сутність (або граф) за PK, унікальним ключем чи простим where. QueryBuilder — коли запит не мапиться на один entity: агрегати, `GROUP BY`, звіт «виторг по категоріях» (`SUM(quantity * unit_price_cents)`). `getRawMany()` повертає рядки; `SUM` приходить рядком (`bigint`). Товари з `category_id IS NULL` (після `ON DELETE SET NULL`) потрапляють у бакет `uncategorized` через `leftJoin`, не зникають з виторгу.
 
 ### Seed
 

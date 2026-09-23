@@ -6,6 +6,7 @@ import {
 	ManyToOne,
 	OneToMany,
 	PrimaryGeneratedColumn,
+	Unique,
 } from 'typeorm'
 import { Category } from './category.entity'
 import { OrderItem } from './order-item.entity'
@@ -17,6 +18,7 @@ import { User } from './user.entity'
  * Expression index `idx_products_lower_name` on lower(name) is added in the migration.
  */
 @Entity('products')
+@Unique('products_name_uniq', ['name'])
 @Check('products_name_chk', 'length(btrim(name)) > 0')
 @Check('products_price_chk', 'price_cents > 0')
 @Check('products_stock_chk', 'stock >= 0')

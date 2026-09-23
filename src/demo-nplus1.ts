@@ -90,6 +90,54 @@ async function measure(
 	return { take, naive, join, queryStrategy }
 }
 
+function parseTakes(argv: string[]): number[] | null {
+	const raw = argv.slice(2).filter((arg) => arg.length > 0)
+	if (raw.length === 0) {
+		return null
+	}
+	const takes = raw.map((arg) => {
+		const value = Number(arg)
+		if (!Number.isInteger(value) || value < 1) {
+			throw new Error(
+				`Invalid take "${arg}". Usage: node dist/demo-nplus1.js <n1> <n2> [...]`,
+			)
+		}
+		return value
+	})
+	return [...new Set(takes)].sort((a, b) => a - b)
+}
+
+async function resolveTakes(ds: DataSource): Promise<number[]> {
+	const fromArgv = parseTakes(process.argv)
+	if (fromArgv) {
+		return fromArgv
+	}
+	const total = await ds.getRepository(Order).count()
+	if (total < 1) {
+		throw new Error('No orders in the database; run npm run seed first')
+	}
+	const small = Math.min(3, total)
+	return small === total ? [total] : [small, total]
+}
+
+function printTable(rows: SampleResult[]): void {
+	const ns = rows.map((row) => row.take)
+	const col = (value: string | number) => String(value).padStart(8)
+	console.log('')
+	console.log('graph: order → items → product')
+	console.log(
+		`strategy                         ${ns.map((n) => col(`N=${n}`)).join('')}`,
+	)
+	const line = (label: string, pick: (row: SampleResult) => number): string =>
+		`${label.padEnd(33)}${rows.map((row) => col(pick(row))).join('')}`
+	console.log(line('naive (query in loop)', (row) => row.naive))
+	console.log(line('relations / leftJoinAndSelect', (row) => row.join))
+	console.log(line('relationLoadStrategy: query', (row) => row.queryStrategy))
+	const last = rows[rows.length - 1]
+	console.log('')
+	console.log(`before=${last.naive} after=${last.join}`)
+}
+
 async function main(): Promise<void> {
 	const logger = new QueryCountLogger()
 	const ds = new DataSource({
@@ -99,26 +147,12 @@ async function main(): Promise<void> {
 	})
 	await ds.initialize()
 	try {
-		const takes = [3, 6]
+		const takes = await resolveTakes(ds)
 		const rows: SampleResult[] = []
 		for (const take of takes) {
 			rows.push(await measure(ds, logger, take))
 		}
-
-		console.log('')
-		console.log('graph: order → items → product')
-		console.log('strategy                         N=3   N=6')
-		const naive3 = rows[0].naive
-		const naive6 = rows[1].naive
-		const join3 = rows[0].join
-		const join6 = rows[1].join
-		const q3 = rows[0].queryStrategy
-		const q6 = rows[1].queryStrategy
-		console.log(`naive (query in loop)            ${naive3}    ${naive6}`)
-		console.log(`relations / leftJoinAndSelect    ${join3}     ${join6}`)
-		console.log(`relationLoadStrategy: query      ${q3}     ${q6}`)
-		console.log('')
-		console.log(`before=${naive6} after=${join6}`)
+		printTable(rows)
 	} finally {
 		await ds.destroy()
 	}

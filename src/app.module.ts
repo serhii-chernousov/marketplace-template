@@ -6,13 +6,15 @@ import {
 } from '@nestjs/common'
 import * as OpenApiValidator from 'express-openapi-validator'
 import { join } from 'path'
-import { StoreService } from './services/store.service'
 import { ConfigModule } from '@nestjs/config'
 import { validate } from './config/env.schema'
-import { ListingsController } from './controllers/listings.controller'
-import { OrdersController } from './controllers/orders.controller'
-import { HealthController } from './controllers/health.controller'
-import { DbService } from './services/db.service'
+import { CheckoutModule } from './checkout/checkout.module'
+import { DatabaseModule } from './database/database.module'
+import { HealthModule } from './health/health.module'
+import { JobsModule } from './jobs/jobs.module'
+import { ListingsModule } from './listings/listings.module'
+import { OrdersModule } from './orders/orders.module'
+import { StoreModule } from './store/store.module'
 
 @Module({
 	imports: [
@@ -21,9 +23,14 @@ import { DbService } from './services/db.service'
 			validate,
 			envFilePath: '.env',
 		}),
+		DatabaseModule,
+		StoreModule,
+		CheckoutModule,
+		JobsModule,
+		ListingsModule,
+		OrdersModule,
+		HealthModule,
 	],
-	providers: [StoreService, DbService],
-	controllers: [ListingsController, OrdersController, HealthController],
 })
 export class AppModule implements NestModule {
 	configure(consumer: MiddlewareConsumer) {

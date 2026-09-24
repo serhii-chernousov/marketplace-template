@@ -1,11 +1,24 @@
-# Marketplace API (hw-13)
+# Marketplace API (hw-14)
 
 ## Ресурси
 
 - `GET/POST /v1/listings`, `GET/PATCH /v1/listings/{id}`
-- `GET/POST /v1/orders`, `GET /v1/orders/{id}`
+- `GET/POST /v1/orders`, `GET /v1/orders/{id}` — create йде в Postgres через `CheckoutService`
 
-Гроші — цілі копійки в API (`price_cents`, `total_cents`) і в SQL (`products.price_cents`, `orders.total_cents`, `order_items.unit_price_cents`). Ідентифікація користувача — тимчасові заголовки `X-User-Id` і `X-User-Role` (`buyer` | `seller`).
+Гроші — цілі копійки в API (`price_cents`, `total_cents`) і в SQL (`products.price_cents`, `orders.total_cents`, `order_items.unit_price_cents`). Ідентифікація користувача — тимчасові заголовки `X-User-Id` і `X-User-Role` (`buyer` | `seller`). Для DB-checkout: `buyer-1`…`buyer-5` (або email / numeric id з сіду).
+
+## Структура `src/`
+
+| Каталог | Призначення |
+| --- | --- |
+| `checkout/` | `CheckoutService` — транзакційний checkout |
+| `orders/`, `listings/`, `health/` | Nest feature-модулі (controller + service) |
+| `jobs/` | черга `FOR UPDATE SKIP LOCKED` |
+| `database/` | CLI DataSource, `DatabaseModule`, `DbService` |
+| `store/` | in-memory catalog/idempotency для OpenAPI |
+| `common/` | `with-retry`, `asRows` |
+| `demo/` | CLI-скрипти гонки / воркерів / retry / N+1 |
+| `entities/`, `migrations/` | схема TypeORM |
 
 ## Встановлення
 
@@ -25,7 +38,7 @@ npm start
 
 Змінні описує Zod-схема `src/config/env.schema.ts`. Контракт для git — `.env.example`; реальний `.env` у `.gitignore` і не потрапляє в Docker-образ. У `.env.example` паролі фейкові.
 
-TypeORM (`src/data-source.ts`) читає `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME` з `process.env` — їх треба тримати в Infisical `dev` (основний шлях: `infisical run`). Nest HTTP досі бере пароль з файлу `secrets/db_password` (ДЗ #11), не з `DB_PASSWORD`.
+TypeORM CLI (`src/database/data-source.ts`) читає `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME` з `process.env` — їх треба тримати в Infisical `dev` (основний шлях: `infisical run`). Nest HTTP піднімає той самий TypeORM через `DatabaseModule` (`DB_PASSWORD` з Config). `/db` health додатково вміє читати `secrets/db_password` (ДЗ #11) з fallback на `DB_PASSWORD`.
 
 | Змінна        | Обов'язкова        | Опис                                                                 |
 | ------------- | ------------------ | -------------------------------------------------------------------- |
@@ -155,7 +168,7 @@ curl -s -i -X POST http://localhost:3000/v1/orders \
 
 ## TypeORM (ДЗ #13)
 
-DataSource: `src/data-source.ts`. `synchronize: false` — схему змінюють лише міграції.
+DataSource CLI: `src/database/data-source.ts`. Nest runtime: `DatabaseModule` + feature-модулі (`checkout/`, `orders/`, `jobs/`, `listings/`). `synchronize: false` — схему змінюють лише міграції.
 
 Локально (секрети вже в оточенні, як у CI):
 
@@ -208,6 +221,26 @@ docker compose exec -T db psql -U admin -d shop -c "SELECT 'users' AS t, count(*
 
 Очікувано: users 8, categories 6, products 8, orders 6, order_items 8.
 
+Покупці в сіді отримують `balance_cents = 100000000`, продавці й адмін — `0`. Колонка в схемі має `DEFAULT 0` (міграція ДЗ #14); гроші з’являються лише через seed.
+
+## Конкурентність (ДЗ #14)
+
+Checkout у `src/checkout/checkout.service.ts` — одна `dataSource.transaction`: атомарний `UPDATE … WHERE stock >= $n RETURNING`, списання `balance_cents`, `INSERT` order + order_item + job. Нестача товару чи грошей → rollback усієї транзакції. HTTP `POST /v1/orders` іде через `OrdersService` → той самий `CheckoutService` (listing title ↔ product name, `buyer-1` → `buyer1@shop.local`).
+
+**Чому atomic UPDATE, а не `SELECT` + арифметика в JS.** `UPDATE products SET stock = stock - $n WHERE … AND stock >= $n RETURNING` одночасно перевіряє залишок і тримає row-lock до кінця транзакції. 0 рядків = відмова без вікна між читанням і записом. Окремий `SELECT … FOR UPDATE` теж коректний у тій самій транзакції, але довший і легше зіпсувати, якщо забути лок перед декрементом.
+
+**Чому retry ловить лише `40001` і `40P01`.** Це коди PostgreSQL для serialization failure і deadlock: сервер убив транзакцію через гонку, її треба почати спочатку разом із читаннями. Constraint (`23514`) чи unique (`23505`) повторювати шкідливо — той самий запис знову впаде або створить дубль. Обгортка: `src/common/with-retry.ts`.
+
+Числа з локальних запусків (після `migrate` + `seed`, `SKIP_VAULT=1`):
+
+| Демо | Результат |
+| --- | --- |
+| `demo:race` | спроб 50, успішних 10, фінальний stock 0, відʼємних рядків 0 |
+| `demo:workers` | worker-1: 4, worker-2: 4, оброблено двічі 0, час 817 мс (послідовний мінімум 1600) |
+| `demo:retry` | 1 повтор з кодом `40001`, фінальний `concurrency_probe.value = 2` |
+
+Воркери (`src/jobs/job-queue.service.ts`) беруть рядок через `FOR UPDATE SKIP LOCKED` і тримають транзакцію відкритою на час «обробки»; `status = done` і `processed_count` комітяться разом. CLI-скрипти лежать у `src/demo/`.
+
 ## Grading
 
 ```bash
@@ -222,5 +255,8 @@ npm run migrate:revert && npm run migrate
 npm run seed && npm run seed
 npm run demo:nplus1
 npm run report
+npm run demo:race
+npm run demo:workers
+npm run demo:retry
 ```
 

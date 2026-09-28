@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common'
 import { DataSource } from 'typeorm'
 import { asRows } from '../common/pg-rows'
+import { withRetry } from '../common/with-retry'
 
 export interface CheckoutItemInput {
 	productId: string
@@ -31,6 +32,26 @@ export class InsufficientFundsError extends Error {
 		super(message)
 		this.name = 'InsufficientFundsError'
 	}
+}
+
+/**
+ * Stable product row-lock order. Opposite request orders on the same
+ * products deadlock (40P01); original indexes keep unitPrices aligned.
+ */
+function itemsInLockOrder(
+	items: CheckoutItemInput[],
+): Array<{ item: CheckoutItemInput; index: number }> {
+	return items
+		.map((item, index) => ({ item, index }))
+		.sort((left, right) => {
+			if (left.item.productId < right.item.productId) {
+				return -1
+			}
+			if (left.item.productId > right.item.productId) {
+				return 1
+			}
+			return left.index - right.index
+		})
 }
 
 /**
@@ -65,102 +86,101 @@ export class CheckoutService {
 			}
 		}
 
-		return this.dataSource.transaction(async (manager) => {
-			let totalCents = 0
-			const unitPrices: number[] = []
-			const pricedItems: Array<{
-				productId: string
-				quantity: number
-				unitPriceCents: number
-			}> = []
+		const lockedItems = itemsInLockOrder(input.items)
 
-			for (const item of input.items) {
-				const productRows = asRows<{
-					stock: number
-					price_cents: number
-				}>(
-					await manager.query(
-						`
+		return withRetry(() =>
+			this.dataSource.transaction(async (manager) => {
+				let totalCents = 0
+				const unitPrices = new Array<number>(input.items.length)
+				const pricedItems: Array<{
+					productId: string
+					quantity: number
+					unitPriceCents: number
+				}> = []
+
+				for (const { item, index } of lockedItems) {
+					const productRows = asRows<{
+						stock: number
+						price_cents: number
+					}>(
+						await manager.query(
+							`
 						UPDATE products
 						SET stock = stock - $1
 						WHERE id = $2 AND is_active = true AND stock >= $1
 						RETURNING stock, price_cents
 						`,
-						[item.quantity, item.productId],
-					),
-				)
-				if (productRows.length === 0) {
-					throw new OutOfStockError()
+							[item.quantity, item.productId],
+						),
+					)
+					if (productRows.length === 0) {
+						throw new OutOfStockError()
+					}
+					const unitPriceCents = Number(productRows[0].price_cents)
+					unitPrices[index] = unitPriceCents
+					totalCents += unitPriceCents * item.quantity
+					pricedItems.push({
+						productId: item.productId,
+						quantity: item.quantity,
+						unitPriceCents,
+					})
 				}
-				const unitPriceCents = Number(productRows[0].price_cents)
-				unitPrices.push(unitPriceCents)
-				totalCents += unitPriceCents * item.quantity
-				pricedItems.push({
-					productId: item.productId,
-					quantity: item.quantity,
-					unitPriceCents,
-				})
-			}
 
-			const balanceRows = asRows<{ balance_cents: number }>(
-				await manager.query(
-					`
+				const balanceRows = asRows<{ balance_cents: number }>(
+					await manager.query(
+						`
 					UPDATE users
 					SET balance_cents = balance_cents - $1
 					WHERE id = $2 AND balance_cents >= $1
 					RETURNING balance_cents
 					`,
-					[totalCents, input.userId],
-				),
-			)
-			if (balanceRows.length === 0) {
-				throw new InsufficientFundsError()
-			}
+						[totalCents, input.userId],
+					),
+				)
+				if (balanceRows.length === 0) {
+					throw new InsufficientFundsError()
+				}
 
-			const orderRows = asRows<{ id: string }>(
-				await manager.query(
-					`
+				const orderRows = asRows<{ id: string }>(
+					await manager.query(
+						`
 					INSERT INTO orders (user_id, status, total_cents)
 					VALUES ($1, 'paid', $2)
 					RETURNING id
 					`,
-					[input.userId, totalCents],
-				),
-			)
-			const orderId = String(orderRows[0].id)
+						[input.userId, totalCents],
+					),
+				)
+				const orderId = String(orderRows[0].id)
 
-			for (const item of pricedItems) {
-				await manager.query(
-					`
+				for (const item of pricedItems) {
+					await manager.query(
+						`
 					INSERT INTO order_items (order_id, product_id, quantity, unit_price_cents)
 					VALUES ($1, $2, $3, $4)
 					`,
-					[
-						orderId,
-						item.productId,
-						item.quantity,
-						item.unitPriceCents,
-					],
-				)
-			}
+						[orderId, item.productId, item.quantity, item.unitPriceCents],
+					)
+				}
 
-			const jobRows = asRows<{ id: string }>(
-				await manager.query(
-					`
+				const jobRows = asRows<{ id: string }>(
+					await manager.query(
+						`
 					INSERT INTO jobs (kind, payload, status)
 					VALUES ('order.postprocess', $1::jsonb, 'pending')
 					RETURNING id
 					`,
-					[JSON.stringify({ orderId })],
-				),
-			)
+						[JSON.stringify({ orderId })],
+					),
+				)
 
-			return {
-				orderId,
-				jobId: String(jobRows[0].id),
-				totalCents,
-				unitPrices,
-			}
-		})
+				return {
+					orderId,
+					jobId: String(jobRows[0].id),
+					totalCents,
+					unitPrices,
+				}
+			}),
+		)
 	}
 }

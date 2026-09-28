@@ -31,6 +31,10 @@ interface IdempotencyRecord {
 	body: Order
 }
 
+/**
+ * In-memory catalog/idempotency for OpenAPI contract demos (ДЗ #09).
+ * Durable checkout lives in CheckoutService + Postgres.
+ */
 @Injectable()
 export class StoreService {
 	readonly listings = new Map<string, Listing>()
@@ -40,19 +44,19 @@ export class StoreService {
 	constructor() {
 		this.listings.set('listing-1', {
 			id: 'listing-1',
-			title: 'Vintage lamp',
-			price_cents: 2500,
+			title: 'Vintage Lamp',
+			price_cents: 4599,
 			status: 'active',
 			seller_id: 'seller-1',
-			quantity: 5,
+			quantity: 12,
 		})
 		this.listings.set('listing-2', {
 			id: 'listing-2',
-			title: 'Ceramic mug',
-			price_cents: 900,
+			title: 'Ceramic Mug',
+			price_cents: 899,
 			status: 'active',
 			seller_id: 'seller-1',
-			quantity: 10,
+			quantity: 40,
 		})
 		this.listings.set('listing-3', {
 			id: 'listing-3',

@@ -1,48 +1,51 @@
 {
-  "name": "marketplace-template",
-  "version": "1.0.0",
-  "private": true,
-  "description": "Marketplace API — OpenAPI contract + NestJS runtime validation (hw-09, variant B)",
-  "scripts": {
-    "build": "nest build",
-    "start": "npm run build && node dist/main.js",
-    "start:dev": "nest start --watch",
-    "format": "prettier --write .",
-    "format:check": "prettier --check .",
-    "lint:openapi": "npx @redocly/cli@2.46.0 lint openapi/openapi.yaml",
-    "bundle:openapi": "npx @redocly/cli@2.46.0 bundle openapi/openapi.yaml -o spec.json",
-    "check:env": "node scripts/check-env-example.mjs",
-    "migrate": "bash scripts/with-secrets.sh dev node ./node_modules/typeorm/cli.js migration:run -d dist/data-source.js",
-    "migrate:show": "bash scripts/with-secrets.sh dev node ./node_modules/typeorm/cli.js migration:show -d dist/data-source.js",
-    "migrate:revert": "bash scripts/with-secrets.sh dev node ./node_modules/typeorm/cli.js migration:revert -d dist/data-source.js",
-    "seed": "bash scripts/with-secrets.sh dev node dist/seed.js",
-    "demo:nplus1": "bash scripts/with-secrets.sh dev node dist/demo-nplus1.js",
-    "report": "bash scripts/with-secrets.sh dev node dist/report.js"
-  },
-  "engines": {
-    "node": ">=18"
-  },
-  "dependencies": {
-    "@nestjs/common": "^11.1.6",
-    "@nestjs/config": "^12.0.0",
-    "@nestjs/core": "^11.1.6",
-    "@nestjs/platform-express": "^11.1.6",
-    "express": "4.22.2",
-    "express-openapi-validator": "5.6.2",
-    "pg": "^8.23.0",
-    "reflect-metadata": "^0.2.2",
-    "rxjs": "^7.8.2",
-    "typeorm": "^0.3.31",
-    "zod": "^4.5.4"
-  },
-  "devDependencies": {
-    "@nestjs/cli": "^11.0.10",
-    "@redocly/cli": "2.46.0",
-    "@types/express": "^4.17.23",
-    "@types/node": "^22.17.2",
-    "@types/pg": "^8.23.1",
-    "dotenv": "^16.6.1",
-    "prettier": "^3.9.6",
-    "typescript": "^5.9.2"
-  }
+	"name": "marketplace-template",
+	"version": "1.0.0",
+	"private": true,
+	"description": "Marketplace API — OpenAPI contract + NestJS runtime validation (hw-09, variant B)",
+	"scripts": {
+		"build": "nest build",
+		"start": "npm run build && node dist/main.js",
+		"start:dev": "nest start --watch",
+		"format": "prettier --write .",
+		"format:check": "prettier --check .",
+		"lint:openapi": "npx @redocly/cli@2.46.0 lint openapi/openapi.yaml",
+		"bundle:openapi": "npx @redocly/cli@2.46.0 bundle openapi/openapi.yaml -o spec.json",
+		"check:env": "node scripts/check-env-example.mjs",
+		"migrate": "bash scripts/with-secrets.sh dev node ./node_modules/typeorm/cli.js migration:run -d dist/database/data-source.js",
+		"migrate:show": "bash scripts/with-secrets.sh dev node ./node_modules/typeorm/cli.js migration:show -d dist/database/data-source.js",
+		"migrate:revert": "bash scripts/with-secrets.sh dev node ./node_modules/typeorm/cli.js migration:revert -d dist/database/data-source.js",
+		"seed": "bash scripts/with-secrets.sh dev node dist/seed.js",
+		"demo:nplus1": "bash scripts/with-secrets.sh dev node dist/demo/demo-nplus1.js",
+		"demo:race": "bash scripts/with-secrets.sh dev node dist/demo/demo-race.js",
+		"demo:workers": "bash scripts/with-secrets.sh dev node dist/demo/demo-workers.js",
+		"demo:retry": "bash scripts/with-secrets.sh dev node dist/demo/demo-retry.js",
+		"report": "bash scripts/with-secrets.sh dev node dist/report.js"
+	},
+	"engines": {
+		"node": ">=18"
+	},
+	"dependencies": {
+		"@nestjs/common": "^11.1.6",
+		"@nestjs/config": "^12.0.0",
+		"@nestjs/core": "^11.1.6",
+		"@nestjs/platform-express": "^11.1.6",
+		"express": "4.22.2",
+		"express-openapi-validator": "5.6.2",
+		"pg": "^8.23.0",
+		"reflect-metadata": "^0.2.2",
+		"rxjs": "^7.8.2",
+		"typeorm": "^0.3.31",
+		"zod": "^4.5.4"
+	},
+	"devDependencies": {
+		"@nestjs/cli": "^11.0.10",
+		"@redocly/cli": "2.46.0",
+		"@types/express": "^4.17.23",
+		"@types/node": "^22.17.2",
+		"@types/pg": "^8.23.1",
+		"dotenv": "^16.6.1",
+		"prettier": "^3.9.6",
+		"typescript": "^5.9.2"
+	}
 }

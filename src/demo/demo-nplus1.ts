@@ -1,9 +1,9 @@
 import { DataSource } from 'typeorm'
-import base from './data-source'
-import { Order } from './entities/order.entity'
-import { OrderItem } from './entities/order-item.entity'
-import { Product } from './entities/product.entity'
-import { QueryCountLogger } from './logging/query-count-logger'
+import base from '../database/data-source'
+import { Order } from '../entities/order.entity'
+import { OrderItem } from '../entities/order-item.entity'
+import { Product } from '../entities/product.entity'
+import { QueryCountLogger } from '../logging/query-count-logger'
 
 interface SampleResult {
 	take: number
@@ -99,7 +99,7 @@ function parseTakes(argv: string[]): number[] | null {
 		const value = Number(arg)
 		if (!Number.isInteger(value) || value < 1) {
 			throw new Error(
-				`Invalid take "${arg}". Usage: node dist/demo-nplus1.js <n1> <n2> [...]`,
+				`Invalid take "${arg}". Usage: node dist/demo/demo-nplus1.js <n1> <n2> [...]`,
 			)
 		}
 		return value

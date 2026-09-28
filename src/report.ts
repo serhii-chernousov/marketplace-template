@@ -1,4 +1,4 @@
-import dataSource from './data-source'
+import dataSource from './database/data-source'
 import { OrderItem } from './entities/order-item.entity'
 
 interface RevenueRow {

@@ -1,4 +1,4 @@
-import dataSource from './data-source'
+import dataSource from './database/data-source'
 import { Category } from './entities/category.entity'
 import { Order, OrderStatus } from './entities/order.entity'
 import { OrderItem } from './entities/order-item.entity'
@@ -9,6 +9,7 @@ interface UserSeed {
 	email: string
 	fullName: string
 	role: UserRole
+	balanceCents: number
 }
 
 interface CategorySeed {
@@ -32,15 +33,57 @@ interface OrderSeed {
 	items: { productName: string; quantity: number }[]
 }
 
+const BUYER_BALANCE_CENTS = 100_000_000
+
 const USERS: UserSeed[] = [
-	{ email: 'seller1@shop.local', fullName: 'Seller One', role: 'seller' },
-	{ email: 'seller2@shop.local', fullName: 'Seller Two', role: 'seller' },
-	{ email: 'buyer1@shop.local', fullName: 'Buyer One', role: 'buyer' },
-	{ email: 'buyer2@shop.local', fullName: 'Buyer Two', role: 'buyer' },
-	{ email: 'buyer3@shop.local', fullName: 'Buyer Three', role: 'buyer' },
-	{ email: 'buyer4@shop.local', fullName: 'Buyer Four', role: 'buyer' },
-	{ email: 'buyer5@shop.local', fullName: 'Buyer Five', role: 'buyer' },
-	{ email: 'admin@shop.local', fullName: 'Shop Admin', role: 'admin' },
+	{
+		email: 'seller1@shop.local',
+		fullName: 'Seller One',
+		role: 'seller',
+		balanceCents: 0,
+	},
+	{
+		email: 'seller2@shop.local',
+		fullName: 'Seller Two',
+		role: 'seller',
+		balanceCents: 0,
+	},
+	{
+		email: 'buyer1@shop.local',
+		fullName: 'Buyer One',
+		role: 'buyer',
+		balanceCents: BUYER_BALANCE_CENTS,
+	},
+	{
+		email: 'buyer2@shop.local',
+		fullName: 'Buyer Two',
+		role: 'buyer',
+		balanceCents: BUYER_BALANCE_CENTS,
+	},
+	{
+		email: 'buyer3@shop.local',
+		fullName: 'Buyer Three',
+		role: 'buyer',
+		balanceCents: BUYER_BALANCE_CENTS,
+	},
+	{
+		email: 'buyer4@shop.local',
+		fullName: 'Buyer Four',
+		role: 'buyer',
+		balanceCents: BUYER_BALANCE_CENTS,
+	},
+	{
+		email: 'buyer5@shop.local',
+		fullName: 'Buyer Five',
+		role: 'buyer',
+		balanceCents: BUYER_BALANCE_CENTS,
+	},
+	{
+		email: 'admin@shop.local',
+		fullName: 'Shop Admin',
+		role: 'admin',
+		balanceCents: 0,
+	},
 ]
 
 const CATEGORIES: CategorySeed[] = [

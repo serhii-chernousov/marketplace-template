@@ -5,6 +5,10 @@ import { join } from 'node:path'
 import { Pool } from 'pg'
 import type { Env } from '../config/env.schema'
 
+/**
+ * Lightweight pg.Pool for /db health (ДЗ #11 password-file pattern).
+ * Domain transactions use TypeORM DataSource from DatabaseModule.
+ */
 @Injectable()
 export class DbService implements OnModuleDestroy {
 	readonly pool: Pool
@@ -17,7 +21,13 @@ export class DbService implements OnModuleDestroy {
 			port: config.get('DB_PORT', { infer: true }),
 			user: config.get('DB_USER', { infer: true }),
 			database: config.get('DB_NAME', { infer: true }),
-			password: async () => (await readFile(passwordFile, 'utf8')).trimEnd(),
+			password: async () => {
+				try {
+					return (await readFile(passwordFile, 'utf8')).trimEnd()
+				} catch {
+					return config.get('DB_PASSWORD', { infer: true })
+				}
+			},
 		})
 
 		this.pool.on('error', (err) => {

@@ -19,6 +19,7 @@ export type UserRole = 'buyer' | 'seller' | 'admin'
 @Unique('users_email_uniq', ['email'])
 @Check('users_email_chk', `position('@' in email) > 1`)
 @Check('users_role_chk', `role IN ('buyer', 'seller', 'admin')`)
+@Check('users_balance_chk', 'balance_cents >= 0')
 export class User {
 	@PrimaryGeneratedColumn('identity', {
 		type: 'bigint',
@@ -37,6 +38,9 @@ export class User {
 
 	@Column({ name: 'is_active', type: 'boolean', default: true })
 	isActive!: boolean
+
+	@Column({ name: 'balance_cents', type: 'int', default: 0 })
+	balanceCents!: number
 
 	@Column({
 		name: 'created_at',

@@ -12,7 +12,7 @@ import {
 } from '@nestjs/common'
 import { Response } from 'express'
 import { ProblemException } from '../types/problem.exception'
-import { StoreService } from '../services/store.service'
+import { StoreService } from '../store/store.service'
 
 @Controller('v1/listings')
 export class ListingsController {

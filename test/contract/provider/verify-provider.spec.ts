@@ -47,12 +47,24 @@ describe('Marketplace API provider verification', () => {
 			process.env.GITHUB_SHA ??
 			'dev'
 
+		const consumerVersion =
+			process.env.PACT_CONSUMER_VERSION ?? process.env.GITHUB_SHA
+
 		const brokerOptions = brokerUrl
 			? {
 					pactBrokerUrl: brokerUrl,
 					pactBrokerToken: process.env.PACT_BROKER_TOKEN,
 					publishVerificationResult: true as const,
 					providerVersion,
+					// Pact 17: broker mode requires selectors (pactUrls alone is local-only)
+					consumerVersionSelectors: consumerVersion
+						? [
+								{
+									consumer: 'marketplace-frontend',
+									consumerVersion,
+								},
+							]
+						: [{ latest: true }],
 				}
 			: {
 					pactUrls: [

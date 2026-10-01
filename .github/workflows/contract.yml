@@ -34,6 +34,7 @@ jobs:
           PACT_BROKER_URL: ${{ secrets.PACT_BROKER_URL }}
           PACT_BROKER_TOKEN: ${{ secrets.PACT_BROKER_TOKEN }}
           PACT_PROVIDER_VERSION: ${{ github.sha }}
+          PACT_CONSUMER_VERSION: ${{ github.sha }}
         run: npm run verify:provider
 
       - name: can-i-deploy

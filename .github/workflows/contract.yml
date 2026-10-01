@@ -1,0 +1,49 @@
+name: contract
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate consumer contract
+        run: npm run test:contract
+
+      - name: Publish contract to Pact Broker
+        env:
+          PACT_BROKER_URL: ${{ secrets.PACT_BROKER_URL }}
+          PACT_BROKER_TOKEN: ${{ secrets.PACT_BROKER_TOKEN }}
+          GITHUB_SHA: ${{ github.sha }}
+        run: node scripts/publish-pact.mjs
+
+      - name: Verify provider against broker
+        env:
+          PACT_BROKER_URL: ${{ secrets.PACT_BROKER_URL }}
+          PACT_BROKER_TOKEN: ${{ secrets.PACT_BROKER_TOKEN }}
+          PACT_PROVIDER_VERSION: ${{ github.sha }}
+        run: npm run verify:provider
+
+      - name: can-i-deploy
+        env:
+          PACT_BROKER_URL: ${{ secrets.PACT_BROKER_URL }}
+          PACT_BROKER_TOKEN: ${{ secrets.PACT_BROKER_TOKEN }}
+        run: |
+          docker run --rm pactfoundation/pact-cli:latest \
+            broker can-i-deploy \
+            --pacticipant marketplace-frontend \
+            --version "$GITHUB_SHA" \
+            --to prod \
+            --broker-base-url "$PACT_BROKER_URL" \
+            --broker-token "$PACT_BROKER_TOKEN"

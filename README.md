@@ -293,3 +293,99 @@ bash scripts/with-secrets.sh dev bash scripts/backup.sh
 bash scripts/with-secrets.sh dev bash scripts/restore-drill.sh
 ```
 
+## Тестування
+
+Драбина довіри (ДЗ #16): integration на справжньому Postgres у Testcontainers, E2E через supertest і контракт Pact з брокером.
+
+### Команди
+
+```bash
+npm run test:integration   # репозиторії Product / Order (≥ 6 тестів)
+npm run test:e2e           # POST /v1/orders → GET + 404
+npm run test:contract      # consumer → генерує pacts/*.json
+npm run verify:provider    # справжній Nest проти контракту
+```
+
+Каталог `pacts/` створює `test:contract` (і CI теж). Він у `.gitignore` — у git не комітимо згенеровані файли.
+
+### Ізоляція integration-suite
+
+Один контейнер `postgres:16-alpine` на процес Jest; між тестами — `TRUNCATE … RESTART IDENTITY CASCADE`. Стратегія ROLLBACK не підходить: `CheckoutService` комітить власну TypeORM-транзакцію іншим клієнтом пулу, тож зовнішній `BEGIN`/`ROLLBACK` її не скасує. Повторний `npm run test:integration` зелений без ручної чистки БД.
+
+### Pact Broker локально
+
+```bash
+docker compose up -d --wait
+npm run test:contract
+```
+
+Два легальні шляхи верифікації провайдера:
+
+```bash
+# основний: URL і токен з Infisical env dev
+bash scripts/with-secrets.sh dev npm run verify:provider
+
+# форма грейдера / локальний compose без сховища
+SKIP_VAULT=1 PACT_BROKER_URL=http://127.0.0.1:9292 PACT_PROVIDER_VERSION=1.0.0 \
+  npm run verify:provider
+```
+
+Код читає лише `process.env.PACT_BROKER_URL` / `PACT_BROKER_TOKEN`. У Infisical `dev` заведи ці ключі (і за потреби `PACT_PROVIDER_VERSION`); значення в репозиторій не клади. Без `PACT_BROKER_URL` `verify:provider` читає локальний `pacts/*.json` і нічого не публікує.
+
+### can-i-deploy: unknown → true
+
+Порядок кроків фіксований. `to=prod` питає, чи є успішна верифікація проти версії провайдера з тегом `prod`.
+
+```bash
+export PACT_BROKER_URL=http://127.0.0.1:9292
+
+curl -s -o /tmp/pact-publish.body -w '%{http_code}\n' \
+  -X PUT \
+  "$PACT_BROKER_URL/pacts/provider/marketplace-api/consumer/marketplace-frontend/version/1.0.0" \
+  -H 'Content-Type: application/json' \
+  --data-binary @pacts/marketplace-frontend-marketplace-api.json
+# очікуємо 201
+
+PACT_PROVIDER_VERSION=1.0.0 npm run verify:provider
+
+# ДО тега prod — гейт чесно каже «невідомо»
+curl -s "$PACT_BROKER_URL/can-i-deploy?pacticipant=marketplace-frontend&version=1.0.0&to=prod"
+```
+
+Приклад відповіді до тега (ключ `summary`):
+
+```json
+{
+  "deployable": null,
+  "reason": "There is no verified pact between version 1.0.0 of marketplace-frontend and the latest version of marketplace-api with tag prod (no such version exists)",
+  "success": 0,
+  "failed": 0,
+  "unknown": 1
+}
+```
+
+```bash
+curl -s -o /tmp/pact-tag.body -w '%{http_code}\n' \
+  -X PUT \
+  "$PACT_BROKER_URL/pacticipants/marketplace-api/versions/1.0.0/tags/prod" \
+  -H 'Content-Type: application/json'
+# очікуємо 201
+
+# ПІСЛЯ тега — можна деплоїти консюмера
+curl -s "$PACT_BROKER_URL/can-i-deploy?pacticipant=marketplace-frontend&version=1.0.0&to=prod"
+```
+
+Приклад відповіді після тега (`summary`):
+
+```json
+{
+  "deployable": true,
+  "reason": "All required verification results are published and successful",
+  "success": 1,
+  "failed": 0,
+  "unknown": 0
+}
+```
+
+Тег `prod` ставиться на версію **провайдера** (`marketplace-api`), і вона має збігатися з `PACT_PROVIDER_VERSION` у Verifier. CI-job `contract` у `.github/workflows/contract.yml`: publish → verify → `can-i-deploy`.
+

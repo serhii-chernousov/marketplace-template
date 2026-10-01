@@ -7,21 +7,9 @@ import {
 import { ConfigService } from '@nestjs/config'
 import { DataSource } from 'typeorm'
 import type { Env } from '../config/env.schema'
-import { Category } from '../entities/category.entity'
-import { Job } from '../entities/job.entity'
-import { OrderItem } from '../entities/order-item.entity'
-import { Order } from '../entities/order.entity'
-import { Product } from '../entities/product.entity'
-import { User } from '../entities/user.entity'
+import { TYPEORM_ENTITIES } from './typeorm-entities'
 
-export const TYPEORM_ENTITIES = [
-	User,
-	Category,
-	Product,
-	Order,
-	OrderItem,
-	Job,
-]
+export { TYPEORM_ENTITIES } from './typeorm-entities'
 
 @Injectable()
 class DataSourceShutdown implements OnModuleDestroy {

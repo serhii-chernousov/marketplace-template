@@ -37,6 +37,18 @@ jobs:
           PACT_CONSUMER_VERSION: ${{ github.sha }}
         run: npm run verify:provider
 
+      # Mark this verified provider build as the prod candidate so can-i-deploy
+      # can resolve --to prod (otherwise the broker correctly answers unknown).
+      - name: Tag provider version as prod
+        env:
+          PACT_BROKER_URL: ${{ secrets.PACT_BROKER_URL }}
+          PACT_BROKER_TOKEN: ${{ secrets.PACT_BROKER_TOKEN }}
+        run: |
+          curl -sf -X PUT \
+            "$PACT_BROKER_URL/pacticipants/marketplace-api/versions/${GITHUB_SHA}/tags/prod" \
+            -H "Authorization: Bearer $PACT_BROKER_TOKEN" \
+            -H "Content-Type: application/json"
+
       - name: can-i-deploy
         env:
           PACT_BROKER_URL: ${{ secrets.PACT_BROKER_URL }}

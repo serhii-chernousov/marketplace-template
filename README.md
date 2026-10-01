@@ -1,4 +1,4 @@
-# Marketplace API (hw-14)
+# Marketplace API (hw-15)
 
 ## Ресурси
 
@@ -241,11 +241,34 @@ Checkout у `src/checkout/checkout.service.ts` — одна `dataSource.transact
 
 Воркери (`src/jobs/job-queue.service.ts`) беруть рядок через `FOR UPDATE SKIP LOCKED` і тримають транзакцію відкритою на час «обробки»; `status = done` і `processed_count` комітяться разом. CLI-скрипти лежать у `src/demo/`.
 
+## Data layer ops
+
+Підняти стек (Postgres + PgBouncer):
+
+```bash
+docker compose up -d --wait
+```
+
+Застосунок і CLI ходять у базу через PgBouncer на порту `6432` (`DB_HOST`/`DB_PORT` або `DB_URL` у сховищі). Прямий Postgres лишається на `5432` для `docker compose exec db` (адмінські `psql` / дебаг).
+
+Бекап і restore-drill читають `DATABASE_URL` (або fallback `DB_URL`) з оточення. Основний шлях — обгортка `scripts/with-secrets.sh`; при `SKIP_VAULT=1` вона просто виконує команду з уже заданим env.
+
+```bash
+export DATABASE_URL=postgres://admin:admin-secret@127.0.0.1:6432/shop
+export SKIP_VAULT=1
+bash scripts/with-secrets.sh dev bash scripts/backup.sh
+bash scripts/with-secrets.sh dev bash scripts/restore-drill.sh
+```
+
+Дампам місце в `backups/` (локальна тека поза контейнером). Розклад — `backup.cron` (щоночі о 03:00). Протокол останнього drill — `RESTORE-DRILL.md`.
+
+**Чому `pool_mode = transaction`.** PgBouncer віддає серверне зʼєднання клієнту лише на час транзакції, тож `default_pool_size = 8` обслуговує багато клієнтів (`max_client_conn = 200`) без роздування `max_connections` у Postgres. Це ламає сесійний стан: (1) `SET` / `RESET` — наступний запит може піти на інший backend; (2) `LISTEN` — підписка привʼязана до конкретного backend, який пулер забирає після транзакції; (3) сесійний `pg_advisory_lock` — лок лишається на backend, а не на твоєму клієнті (заміна — `pg_advisory_xact_lock`). Protocol-level prepared statements від `pg`/TypeORM тримає `max_prepared_statements = 200` у PgBouncer ≥ 1.21.
+
 ## Grading
 
 ```bash
 docker compose up -d --wait
-export DB_HOST=127.0.0.1 DB_PORT=5432 DB_USER=admin DB_PASSWORD=admin-secret DB_NAME=shop
+export DB_HOST=127.0.0.1 DB_PORT=6432 DB_USER=admin DB_PASSWORD=admin-secret DB_NAME=shop
 export SKIP_VAULT=1    # у грейдера немає доступу до сховища
 npm ci && npx tsc --noEmit
 npm run build
@@ -258,5 +281,15 @@ npm run report
 npm run demo:race
 npm run demo:workers
 npm run demo:retry
+```
+
+Скрипти `backup.sh` / `restore-drill.sh` читають `DATABASE_URL` з оточення; `with-secrets.sh` при `SKIP_VAULT=1` не ходить у Infisical і просто виконує команду.
+
+```bash
+docker compose up -d --wait
+export DATABASE_URL=postgres://admin:admin-secret@127.0.0.1:6432/shop
+export SKIP_VAULT=1    # у грейдера немає доступу до сховища
+bash scripts/with-secrets.sh dev bash scripts/backup.sh
+bash scripts/with-secrets.sh dev bash scripts/restore-drill.sh
 ```
 

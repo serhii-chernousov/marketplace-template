@@ -1,0 +1,2 @@
+"admin" "admin-secret"
+"app_user" "app-secret-initial"

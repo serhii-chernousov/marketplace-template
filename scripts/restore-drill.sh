@@ -13,22 +13,24 @@ if [ -z "${DATABASE_URL:-}" ]; then
 	fi
 fi
 
-without_scheme="${DATABASE_URL#*://}"
-hostpath="${without_scheme#*@}"
-PGDATABASE="${hostpath##*/}"
-PGDATABASE="${PGDATABASE%%\?*}"
-
 LATEST="$(ls -1t "$ROOT/backups"/*.dump 2>/dev/null | head -n 1 || true)"
 if [ -z "$LATEST" ]; then
 	echo "no dump in $ROOT/backups" >&2
 	exit 1
 fi
 
-CHECKSUM_SQL="SELECT CASE WHEN to_regclass('public.orders') IS NULL THEN '0|0' ELSE (SELECT count(*)::text || '|' || coalesce(sum(total_cents), 0)::text FROM public.orders) END"
+CHECKSUM_SQL="SELECT count(*)::text || '|' || coalesce(sum(total_cents), 0)::text FROM public.orders"
 
-BEFORE="$(docker compose exec -T db psql -U admin -d "$PGDATABASE" -Atc "$CHECKSUM_SQL")"
+BEFORE="$(psql "$DATABASE_URL" -Atc "$CHECKSUM_SQL")"
+COUNT="${BEFORE%%|*}"
+if [ "$COUNT" = "0" ]; then
+	echo "orders count is 0 — restore-drill needs seeded data" >&2
+	exit 1
+fi
 
 NAME="shop-restore-$$"
+START="$(date +%s)"
+
 docker volume create "$NAME" >/dev/null
 docker run -d --name "$NAME" \
 	-e POSTGRES_USER=admin \
@@ -52,7 +54,6 @@ done
 
 docker exec "$NAME" psql -U admin -d shop -v ON_ERROR_STOP=1 -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public; GRANT ALL ON SCHEMA public TO public; GRANT ALL ON SCHEMA public TO admin;"
 
-START="$(date +%s)"
 docker exec -i "$NAME" pg_restore --no-owner --no-acl --exit-on-error -U admin -d shop < "$LATEST"
 END="$(date +%s)"
 RTO="$((END - START))"

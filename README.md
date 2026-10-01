@@ -249,7 +249,7 @@ Checkout у `src/checkout/checkout.service.ts` — одна `dataSource.transact
 docker compose up -d --wait
 ```
 
-Застосунок і CLI ходять у базу через PgBouncer на порту `6432` (`DB_HOST`/`DB_PORT` або `DB_URL` у сховищі). Прямий Postgres лишається на `5432` для `docker compose exec db` і старих grading-команд міграцій.
+Застосунок і CLI ходять у базу через PgBouncer на порту `6432` (`DB_HOST`/`DB_PORT` або `DB_URL` у сховищі). Прямий Postgres лишається на `5432` для `docker compose exec db` (адмінські `psql` / дебаг).
 
 Бекап і restore-drill читають `DATABASE_URL` (або fallback `DB_URL`) з оточення. Основний шлях — обгортка `scripts/with-secrets.sh`; при `SKIP_VAULT=1` вона просто виконує команду з уже заданим env.
 
@@ -268,7 +268,7 @@ bash scripts/with-secrets.sh dev bash scripts/restore-drill.sh
 
 ```bash
 docker compose up -d --wait
-export DB_HOST=127.0.0.1 DB_PORT=5432 DB_USER=admin DB_PASSWORD=admin-secret DB_NAME=shop
+export DB_HOST=127.0.0.1 DB_PORT=6432 DB_USER=admin DB_PASSWORD=admin-secret DB_NAME=shop
 export SKIP_VAULT=1    # у грейдера немає доступу до сховища
 npm ci && npx tsc --noEmit
 npm run build

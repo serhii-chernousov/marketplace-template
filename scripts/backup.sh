@@ -13,16 +13,11 @@ if [ -z "${DATABASE_URL:-}" ]; then
 	fi
 fi
 
-without_scheme="${DATABASE_URL#*://}"
-hostpath="${without_scheme#*@}"
-PGDATABASE="${hostpath##*/}"
-PGDATABASE="${PGDATABASE%%\?*}"
-
 DEST="$ROOT/backups"
 mkdir -p "$DEST"
 STAMP="$(date +%Y-%m-%dT%H-%M-%S)"
 FILE="$DEST/shop-${STAMP}.dump"
 
-docker compose exec -T db pg_dump -Fc --no-owner -U admin -d "$PGDATABASE" > "$FILE"
+pg_dump -Fc --no-owner --dbname="$DATABASE_URL" > "$FILE"
 
 echo "$FILE"

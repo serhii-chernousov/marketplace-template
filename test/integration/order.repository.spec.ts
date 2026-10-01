@@ -33,7 +33,10 @@ describe('Order repository', () => {
 		await stopTestDatabase()
 	})
 
-	it('persists an order with a line item', async () => {
+	async function seedPaidOrderWithItem(): Promise<{
+		order: Order
+		product: Product
+	}> {
 		const buyer = await userRepo.save(aUser({ role: 'buyer' }))
 		const seller = await userRepo.save(aUser({ role: 'seller' }))
 		const product = await productRepo.save(aProduct(seller))
@@ -46,6 +49,11 @@ describe('Order repository', () => {
 				unitPriceCents: 4599,
 			}),
 		)
+		return { order, product }
+	}
+
+	it('persists an order with a line item', async () => {
+		const { order } = await seedPaidOrderWithItem()
 		const found = await orderRepo.findOneOrFail({
 			where: { id: order.id },
 			relations: { items: true },
@@ -55,18 +63,7 @@ describe('Order repository', () => {
 	})
 
 	it('computes order total via JOIN and SUM', async () => {
-		const buyer = await userRepo.save(aUser({ role: 'buyer' }))
-		const seller = await userRepo.save(aUser({ role: 'seller' }))
-		const product = await productRepo.save(aProduct(seller))
-		const order = await orderRepo.save(
-			anOrder(buyer, { totalCents: 9198 }),
-		)
-		await itemRepo.save(
-			anOrderItem(order, product, {
-				quantity: 2,
-				unitPriceCents: 4599,
-			}),
-		)
+		const { order } = await seedPaidOrderWithItem()
 		const rows: Array<{ computed_total: number }> = await ds.query(
 			`
 			SELECT o.id,

@@ -10,12 +10,8 @@ import { AddBalanceAndJobQueue1790200000000 } from '../../../src/migrations/1790
 
 let container: StartedPostgreSqlContainer | undefined
 let dataSource: DataSource | undefined
-let users = 0
 
-/**
- * Maps a Postgres connection URI into the env vars Nest ConfigModule expects.
- * Also sets DATABASE_URL for greppable / lecture-style tooling.
- */
+/** Maps a Postgres URI into the env vars Nest ConfigModule expects. */
 export function applyTestDatabaseEnv(uri: string): void {
 	const parsed = new URL(uri)
 	process.env.DATABASE_URL = uri
@@ -28,12 +24,8 @@ export function applyTestDatabaseEnv(uri: string): void {
 	process.env.PORT = process.env.PORT || '3000'
 }
 
-/**
- * Starts one postgres:16-alpine container per Jest process and runs migrations.
- * Shared across integration / e2e / provider files via module cache + user count.
- */
+/** Starts postgres:16-alpine for this Jest test file and runs migrations. */
 export async function startTestDatabase(): Promise<DataSource> {
-	users += 1
 	if (dataSource?.isInitialized) {
 		return dataSource
 	}
@@ -57,9 +49,7 @@ export async function startTestDatabase(): Promise<DataSource> {
 	return dataSource
 }
 
-/**
- * Clears all mutable tables between tests. Restores concurrency_probe seed row.
- */
+/** Clears mutable tables between tests. Restores concurrency_probe seed row. */
 export async function truncateAll(ds: DataSource): Promise<void> {
 	await ds.query(`
 		TRUNCATE TABLE
@@ -77,14 +67,8 @@ export async function truncateAll(ds: DataSource): Promise<void> {
 	)
 }
 
-/**
- * Destroys DataSource and stops the container when the last suite releases it.
- */
+/** Destroys DataSource and stops the container for this test file. */
 export async function stopTestDatabase(): Promise<void> {
-	users -= 1
-	if (users > 0) {
-		return
-	}
 	if (dataSource?.isInitialized) {
 		await dataSource.destroy()
 	}

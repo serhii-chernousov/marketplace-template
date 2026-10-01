@@ -6,9 +6,6 @@ import type { OrderItem } from '../../../src/entities/order-item.entity'
 
 let seq = 0
 
-/**
- * Valid unique defaults for a marketplace user. Override fields as needed.
- */
 export function aUser(overrides: DeepPartial<User> = {}): DeepPartial<User> {
 	seq += 1
 	return {
@@ -21,9 +18,6 @@ export function aUser(overrides: DeepPartial<User> = {}): DeepPartial<User> {
 	}
 }
 
-/**
- * Valid unique defaults for a product owned by the given seller.
- */
 export function aProduct(
 	seller: User,
 	overrides: DeepPartial<Product> = {},
@@ -40,9 +34,6 @@ export function aProduct(
 	}
 }
 
-/**
- * Valid defaults for a paid order owned by the given buyer.
- */
 export function anOrder(
 	buyer: User,
 	overrides: DeepPartial<Order> = {},
@@ -55,9 +46,6 @@ export function anOrder(
 	}
 }
 
-/**
- * Valid defaults for an order line linking order ↔ product.
- */
 export function anOrderItem(
 	order: Order,
 	product: Product,

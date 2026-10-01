@@ -13,7 +13,7 @@ if (!brokerUrl) {
 }
 
 const consumerVersion =
-	process.env.GITHUB_SHA ?? process.env.PACT_CONSUMER_VERSION ?? '1.0.0'
+	process.env.PACT_CONSUMER_VERSION ?? process.env.GITHUB_SHA ?? '1.0.0'
 
 const publisher = new Publisher({
 	pactFilesOrDirs: [path.join(root, 'pacts')],

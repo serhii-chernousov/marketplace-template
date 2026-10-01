@@ -300,7 +300,7 @@ bash scripts/with-secrets.sh dev bash scripts/restore-drill.sh
 ### Команди
 
 ```bash
-npm run test:integration   # репозиторії Product / Order (≥ 6 тестів)
+npm run test:integration   # Product / Order / CheckoutService проти Postgres
 npm run test:e2e           # POST /v1/orders → GET + 404
 npm run test:contract      # consumer → генерує pacts/*.json
 npm run verify:provider    # справжній Nest проти контракту
@@ -308,9 +308,11 @@ npm run verify:provider    # справжній Nest проти контракт
 
 Каталог `pacts/` створює `test:contract` (і CI теж). Він у `.gitignore` — у git не комітимо згенеровані файли.
 
+Happy path E2E: `POST` проходить через `CheckoutService` у Postgres, а `GET /v1/orders/:id` читає копію з in-memory `StoreService.orders` (не з БД) — так зараз влаштований HTTP-шар.
+
 ### Ізоляція integration-suite
 
-Один контейнер `postgres:16-alpine` на процес Jest; між тестами — `TRUNCATE … RESTART IDENTITY CASCADE`. Стратегія ROLLBACK не підходить: `CheckoutService` комітить власну TypeORM-транзакцію іншим клієнтом пулу, тож зовнішній `BEGIN`/`ROLLBACK` її не скасує. Повторний `npm run test:integration` зелений без ручної чистки БД.
+Кожен Jest-файл піднімає свій контейнер `postgres:16-alpine` (registry модулів ізольований між файлами); між тестами всередині файлу — `TRUNCATE … RESTART IDENTITY CASCADE`. Стратегія ROLLBACK не підходить: `CheckoutService` комітить власну TypeORM-транзакцію іншим клієнтом пулу, тож зовнішній `BEGIN`/`ROLLBACK` її не скасує. Повторний `npm run test:integration` зелений без ручної чистки БД.
 
 ### Pact Broker локально
 
@@ -352,16 +354,8 @@ PACT_PROVIDER_VERSION=1.0.0 npm run verify:provider
 curl -s "$PACT_BROKER_URL/can-i-deploy?pacticipant=marketplace-frontend&version=1.0.0&to=prod"
 ```
 
-Приклад відповіді до тега (ключ `summary`):
-
 ```json
-{
-  "deployable": null,
-  "reason": "There is no verified pact between version 1.0.0 of marketplace-frontend and the latest version of marketplace-api with tag prod (no such version exists)",
-  "success": 0,
-  "failed": 0,
-  "unknown": 1
-}
+{"summary":{"deployable":null,"reason":"There is no verified pact between version 1.0.0 of marketplace-frontend and the latest version of marketplace-api with tag prod (no such version exists)","success":0,"failed":0,"unknown":1},"notices":[{"type":"error","text":"There is no verified pact between version 1.0.0 of marketplace-frontend and the latest version of marketplace-api with tag prod (no such version exists)"}],"matrix":[{"consumer":{"name":"marketplace-frontend","version":{"number":"1.0.0","branch":null,"branches":[],"branchVersions":[],"environments":[],"_links":{"self":{"href":"http://127.0.0.1:9292/pacticipants/marketplace-frontend/versions/1.0.0"}},"tags":[]},"_links":{"self":{"href":"http://127.0.0.1:9292/pacticipants/marketplace-frontend"}}},"provider":{"name":"marketplace-api","version":null,"_links":{"self":{"href":"http://127.0.0.1:9292/pacticipants/marketplace-api"}}},"pact":{"createdAt":"2026-10-01T10:53:10+00:00","_links":{"self":{"href":"http://127.0.0.1:9292/pacts/provider/marketplace-api/consumer/marketplace-frontend/version/1.0.0"}}},"verificationResult":null}]}
 ```
 
 ```bash
@@ -375,16 +369,8 @@ curl -s -o /tmp/pact-tag.body -w '%{http_code}\n' \
 curl -s "$PACT_BROKER_URL/can-i-deploy?pacticipant=marketplace-frontend&version=1.0.0&to=prod"
 ```
 
-Приклад відповіді після тега (`summary`):
-
 ```json
-{
-  "deployable": true,
-  "reason": "All required verification results are published and successful",
-  "success": 1,
-  "failed": 0,
-  "unknown": 0
-}
+{"summary":{"deployable":true,"reason":"All required verification results are published and successful","success":1,"failed":0,"unknown":0},"notices":[{"type":"success","text":"All required verification results are published and successful"}],"matrix":[{"consumer":{"name":"marketplace-frontend","version":{"number":"1.0.0","branch":null,"branches":[],"branchVersions":[],"environments":[],"_links":{"self":{"href":"http://127.0.0.1:9292/pacticipants/marketplace-frontend/versions/1.0.0"}},"tags":[]},"_links":{"self":{"href":"http://127.0.0.1:9292/pacticipants/marketplace-frontend"}}},"provider":{"name":"marketplace-api","version":{"number":"1.0.0","branch":"prod","branches":[{"name":"prod","latest":true,"_links":{"self":{"title":"Branch version","name":"prod","href":"http://127.0.0.1:9292/pacticipants/marketplace-api/branches/prod/versions/1.0.0"}}}],"branchVersions":[{"name":"prod","latest":true,"_links":{"self":{"title":"Branch version","name":"prod","href":"http://127.0.0.1:9292/pacticipants/marketplace-api/branches/prod/versions/1.0.0"}}}],"environments":[],"_links":{"self":{"href":"http://127.0.0.1:9292/pacticipants/marketplace-api/versions/1.0.0"}},"tags":[{"name":"prod","latest":true,"_links":{"self":{"href":"http://127.0.0.1:9292/pacticipants/marketplace-api/versions/1.0.0/tags/prod"}}}]},"_links":{"self":{"href":"http://127.0.0.1:9292/pacticipants/marketplace-api"}}},"pact":{"createdAt":"2026-10-01T10:53:10+00:00","_links":{"self":{"href":"http://127.0.0.1:9292/pacts/provider/marketplace-api/consumer/marketplace-frontend/version/1.0.0"}}},"verificationResult":{"success":true,"verifiedAt":"2026-10-01T10:55:18+00:00","_links":{"self":{"href":"http://127.0.0.1:9292/pacts/provider/marketplace-api/consumer/marketplace-frontend/pact-version/257f135cb40f33a37a4020801f93ef1ade339c13/metadata/Y3ZuPTEuMC4w/verification-results/102"}}}}]}
 ```
 
 Тег `prod` ставиться на версію **провайдера** (`marketplace-api`), і вона має збігатися з `PACT_PROVIDER_VERSION` у Verifier. CI-job `contract` у `.github/workflows/contract.yml`: publish → verify → `can-i-deploy`.

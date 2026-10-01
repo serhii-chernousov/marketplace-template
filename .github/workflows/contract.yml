@@ -1,8 +1,9 @@
 name: contract
 
 on:
-  push:
   pull_request:
+  push:
+    branches: [main, master]
 
 jobs:
   contract:
@@ -25,7 +26,7 @@ jobs:
         env:
           PACT_BROKER_URL: ${{ secrets.PACT_BROKER_URL }}
           PACT_BROKER_TOKEN: ${{ secrets.PACT_BROKER_TOKEN }}
-          GITHUB_SHA: ${{ github.sha }}
+          PACT_CONSUMER_VERSION: ${{ github.sha }}
         run: node scripts/publish-pact.mjs
 
       - name: Verify provider against broker
@@ -40,7 +41,7 @@ jobs:
           PACT_BROKER_URL: ${{ secrets.PACT_BROKER_URL }}
           PACT_BROKER_TOKEN: ${{ secrets.PACT_BROKER_TOKEN }}
         run: |
-          docker run --rm pactfoundation/pact-cli:latest \
+          docker run --rm pactfoundation/pact-cli:1.5.0.5 \
             broker can-i-deploy \
             --pacticipant marketplace-frontend \
             --version "$GITHUB_SHA" \

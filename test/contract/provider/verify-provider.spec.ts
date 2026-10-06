@@ -43,14 +43,13 @@ describe('Marketplace API provider verification', () => {
 	it('honours the marketplace-frontend contract', async () => {
 		const brokerUrl = process.env.PACT_BROKER_URL
 		const providerVersion =
-			process.env.PACT_PROVIDER_VERSION ??
-			process.env.GITHUB_SHA ??
-			'dev'
+			process.env.PACT_PROVIDER_VERSION ?? process.env.GITHUB_SHA ?? 'dev'
 
+		const brokerToken = process.env.PACT_BROKER_TOKEN?.trim()
 		const brokerOptions = brokerUrl
 			? {
 					pactBrokerUrl: brokerUrl,
-					pactBrokerToken: process.env.PACT_BROKER_TOKEN,
+					...(brokerToken ? { pactBrokerToken: brokerToken } : {}),
 					publishVerificationResult: true as const,
 					providerVersion,
 					consumerVersionSelectors: [{ latest: true }],

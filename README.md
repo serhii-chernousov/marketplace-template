@@ -3,7 +3,7 @@
 ## Ресурси
 
 - `GET/POST /v1/listings`, `GET/PATCH /v1/listings/{id}`
-- `GET/POST /v1/orders`, `GET /v1/orders/{id}` — create йде в Postgres через `CheckoutService`
+- `GET/POST /v1/orders`, `GET /v1/orders/{id}` — create йде в Postgres через `CheckoutService`, get за id читає рядок `orders`
 
 Гроші — цілі копійки в API (`price_cents`, `total_cents`) і в SQL (`products.price_cents`, `orders.total_cents`, `order_items.unit_price_cents`). Ідентифікація користувача — тимчасові заголовки `X-User-Id` і `X-User-Role` (`buyer` | `seller`). Для DB-checkout: `buyer-1`…`buyer-5` (або email / numeric id з сіду).
 
@@ -308,7 +308,7 @@ npm run verify:provider    # справжній Nest проти контракт
 
 Каталог `pacts/` створює `test:contract` (і CI теж). Він у `.gitignore` — у git не комітимо згенеровані файли.
 
-Happy path E2E: `POST` проходить через `CheckoutService` у Postgres, а `GET /v1/orders/:id` читає копію з in-memory `StoreService.orders` (не з БД) — так зараз влаштований HTTP-шар.
+Happy path E2E: `POST /v1/orders` пише замовлення через `CheckoutService`, а `GET /v1/orders/:id` читає його з Postgres (`orders` + `order_items`). Невідомий id теж виконує `SELECT` і відповідає 404.
 
 ### Ізоляція integration-suite
 
@@ -327,12 +327,14 @@ npm run test:contract
 # основний: URL і токен з Infisical env dev
 bash scripts/with-secrets.sh dev npm run verify:provider
 
-# форма грейдера / локальний compose без сховища
+# форма грейдера / локальний compose без сховища.
+# Брокер auth не вимагає — токена в команді немає, exit 0.
+# Непорожній PACT_BROKER_TOKEN теж дає exit 0.
 SKIP_VAULT=1 PACT_BROKER_URL=http://127.0.0.1:9292 PACT_PROVIDER_VERSION=1.0.0 \
   npm run verify:provider
 ```
 
-Код читає лише `process.env.PACT_BROKER_URL` / `PACT_BROKER_TOKEN`. У Infisical `dev` заведи ці ключі (і за потреби `PACT_PROVIDER_VERSION`); значення в репозиторій не клади. Без `PACT_BROKER_URL` `verify:provider` читає локальний `pacts/*.json` і нічого не публікує.
+Код читає лише `process.env.PACT_BROKER_URL` / `PACT_BROKER_TOKEN`. Ключ `pactBrokerToken` потрапляє в Verifier тільки з непорожнім значенням: `undefined` або `''` валить прогон (`TypeError: pactBrokerToken`). Локальний брокер auth не вимагає, тож форма грейдера вище завершується з exit 0; з непорожнім токеном — теж exit 0. У Infisical `dev` заведи ці ключі (і за потреби `PACT_PROVIDER_VERSION`); значення в репозиторій не клади. Без `PACT_BROKER_URL` `verify:provider` читає локальний `pacts/*.json` і нічого не публікує.
 
 ### can-i-deploy: unknown → true
 

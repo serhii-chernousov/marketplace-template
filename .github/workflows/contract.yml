@@ -1,0 +1,63 @@
+name: contract
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate consumer contract
+        run: npm run test:contract
+
+      - name: Publish contract to Pact Broker
+        env:
+          PACT_BROKER_URL: ${{ secrets.PACT_BROKER_URL }}
+          PACT_BROKER_TOKEN: ${{ secrets.PACT_BROKER_TOKEN }}
+          PACT_CONSUMER_VERSION: ${{ github.sha }}
+        run: node scripts/publish-pact.mjs
+
+      - name: Verify provider against broker
+        env:
+          PACT_BROKER_URL: ${{ secrets.PACT_BROKER_URL }}
+          PACT_BROKER_TOKEN: ${{ secrets.PACT_BROKER_TOKEN }}
+          PACT_PROVIDER_VERSION: ${{ github.sha }}
+          PACT_CONSUMER_VERSION: ${{ github.sha }}
+        run: npm run verify:provider
+
+      # Mark this verified provider build as the prod candidate so can-i-deploy
+      # can resolve --to prod (otherwise the broker correctly answers unknown).
+      - name: Tag provider version as prod
+        env:
+          PACT_BROKER_URL: ${{ secrets.PACT_BROKER_URL }}
+          PACT_BROKER_TOKEN: ${{ secrets.PACT_BROKER_TOKEN }}
+        run: |
+          curl -sf -X PUT \
+            "$PACT_BROKER_URL/pacticipants/marketplace-api/versions/${GITHUB_SHA}/tags/prod" \
+            -H "Authorization: Bearer $PACT_BROKER_TOKEN" \
+            -H "Content-Type: application/json"
+
+      - name: can-i-deploy
+        env:
+          PACT_BROKER_URL: ${{ secrets.PACT_BROKER_URL }}
+          PACT_BROKER_TOKEN: ${{ secrets.PACT_BROKER_TOKEN }}
+        run: |
+          docker run --rm pactfoundation/pact-cli:1.5.0.5 \
+            broker can-i-deploy \
+            --pacticipant marketplace-frontend \
+            --version "$GITHUB_SHA" \
+            --to prod \
+            --broker-base-url "$PACT_BROKER_URL" \
+            --broker-token "$PACT_BROKER_TOKEN"

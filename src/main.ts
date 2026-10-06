@@ -1,13 +1,13 @@
 import 'reflect-metadata'
 import { NestFactory } from '@nestjs/core'
 import { AppModule } from './app.module'
-import { ProblemExceptionFilter } from './filters/problem-exception.filter'
+import { configureApp } from './configure-app'
 import { Env } from './config/env.schema'
 import { ConfigService } from '@nestjs/config'
 
 async function bootstrap() {
 	const app = await NestFactory.create(AppModule)
-	app.useGlobalFilters(new ProblemExceptionFilter())
+	configureApp(app)
 	const configService = app.get(ConfigService<Env, true>)
 	const port = configService.get('PORT', { infer: true })
 	await app.listen(port)

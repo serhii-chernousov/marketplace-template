@@ -5,6 +5,7 @@ import {
 	InsufficientFundsError,
 	OutOfStockError,
 } from '../checkout/checkout.service'
+import { Order as OrderRow } from '../entities/order.entity'
 import { Product } from '../entities/product.entity'
 import { User } from '../entities/user.entity'
 import { ProblemException } from '../types/problem.exception'
@@ -49,9 +50,24 @@ export class OrdersService {
 		return this.store.paginate(filtered, limit, cursor)
 	}
 
-	getById(id: string, userId: string, role: string): Order {
-		const order = this.store.orders.get(id)
-		if (!order) {
+	async getById(id: string, userId: string, role: string): Promise<Order> {
+		const dbId = /^order-(\d+)$/.exec(id)?.[1] ?? id
+		const rows = await this.dataSource
+			.getRepository(OrderRow)
+			.createQueryBuilder('ord')
+			.leftJoinAndSelect('ord.user', 'buyer')
+			.leftJoinAndSelect('ord.items', 'item')
+			.leftJoinAndSelect('item.product', 'product')
+			.leftJoinAndSelect('product.seller', 'seller')
+			.where('CAST(ord.id AS text) = :dbId', { dbId })
+			.getMany()
+		const row = rows[0]
+		row?.items?.sort((left, right) =>
+			left.id < right.id ? -1 : left.id > right.id ? 1 : 0,
+		)
+
+		const seller = row?.items[0]?.product?.seller
+		if (!row?.user || !row.items?.length || !seller) {
 			throw new ProblemException(
 				404,
 				'https://marketplace.local/problems/order-not-found',
@@ -61,10 +77,8 @@ export class OrdersService {
 			)
 		}
 
-		const allowed =
-			(role === 'buyer' && order.buyer_id === userId) ||
-			(role === 'seller' && order.seller_id === userId)
-
+		const order = this.toApiOrder(row, seller)
+		const allowed = await this.callerCanRead(role, userId, row.user, seller)
 		if (!allowed) {
 			throw new ProblemException(
 				403,
@@ -246,21 +260,83 @@ export class OrdersService {
 	}
 
 	private async resolveBuyer(headerUserId: string): Promise<User | null> {
+		return this.resolveUser(headerUserId, 'buyer')
+	}
+
+	private async resolveUser(
+		headerUserId: string,
+		role: 'buyer' | 'seller',
+	): Promise<User | null> {
 		const repo = this.dataSource.getRepository(User)
 		const aliasEmail = USER_ALIASES[headerUserId]
 		if (aliasEmail) {
-			return repo.findOne({ where: { email: aliasEmail, role: 'buyer' } })
+			return repo.findOne({ where: { email: aliasEmail, role } })
 		}
 		if (headerUserId.includes('@')) {
 			return repo.findOne({
-				where: { email: headerUserId, role: 'buyer' },
+				where: { email: headerUserId, role },
 			})
 		}
 		if (/^\d+$/.test(headerUserId)) {
 			return repo.findOne({
-				where: { id: headerUserId, role: 'buyer' },
+				where: { id: headerUserId, role },
 			})
 		}
 		return null
+	}
+
+	private async callerCanRead(
+		role: string,
+		userId: string,
+		buyer: User,
+		seller: User,
+	): Promise<boolean> {
+		if (role === 'buyer') {
+			const caller = await this.resolveUser(userId, 'buyer')
+			return caller?.id === buyer.id
+		}
+		if (role === 'seller') {
+			const caller = await this.resolveUser(userId, 'seller')
+			return caller?.id === seller.id
+		}
+		return false
+	}
+
+	private toApiOrder(row: OrderRow, seller: User): Order {
+		const status: Order['status'] =
+			row.status === 'paid' || row.status === 'cancelled'
+				? row.status
+				: 'created'
+		return {
+			id: `order-${row.id}`,
+			buyer_id: this.publicUserId(row.user.email),
+			seller_id: this.publicUserId(seller.email),
+			items: row.items.map((item) => ({
+				listing_id: this.listingIdForProduct(item.product.name),
+				quantity: item.quantity,
+				price_cents: item.unitPriceCents,
+			})),
+			total_cents: row.totalCents,
+			status,
+		}
+	}
+
+	private publicUserId(email: string): string {
+		for (const [alias, aliasEmail] of Object.entries(USER_ALIASES)) {
+			if (aliasEmail === email) {
+				return alias
+			}
+		}
+		return email
+	}
+
+	private listingIdForProduct(name: string): string {
+		const needle = name.toLowerCase()
+		for (const listing of this.store.listings.values()) {
+			if (listing.title.toLowerCase() === needle) {
+				return listing.id
+			}
+		}
+		return name
 	}
 }

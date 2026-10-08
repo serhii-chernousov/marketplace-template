@@ -1,9 +1,12 @@
-# Marketplace API (hw-15)
+# Marketplace API (hw-18)
 
 ## Ресурси
 
 - `GET/POST /v1/listings`, `GET/PATCH /v1/listings/{id}`
 - `GET/POST /v1/orders`, `GET /v1/orders/{id}` — create йде в Postgres через `CheckoutService`, get за id читає рядок `orders`
+- `PATCH /orders/{id}/status` — зміна статусу (поза OpenAPI `/v1`); після commit емітить подію в спільну шину
+- `GET /orders/{id}/events` — SSE-потік `order.status` з `id:` і підтримкою `Last-Event-ID`
+- WebSocket (socket.io) — `join` у кімнату `orders:<id>` після перевірки власника; подія `order.status` лише в цю кімнату
 
 Гроші — цілі копійки в API (`price_cents`, `total_cents`) і в SQL (`products.price_cents`, `orders.total_cents`, `order_items.unit_price_cents`). Ідентифікація користувача — тимчасові заголовки `X-User-Id` і `X-User-Role` (`buyer` | `seller`). Для DB-checkout: `buyer-1`…`buyer-5` (або email / numeric id з сіду).
 
@@ -12,13 +15,15 @@
 | Каталог | Призначення |
 | --- | --- |
 | `checkout/` | `CheckoutService` — транзакційний checkout |
-| `orders/`, `listings/`, `health/` | Nest feature-модулі (controller + service) |
+| `orders/`, `listings/`, `health/` | Nest feature-модулі (controller + service + gateway) |
 | `jobs/` | черга `FOR UPDATE SKIP LOCKED` |
 | `database/` | CLI DataSource, `DatabaseModule`, `DbService` |
 | `store/` | in-memory catalog/idempotency для OpenAPI |
 | `common/` | `with-retry`, `asRows` |
 | `demo/` | CLI-скрипти гонки / воркерів / retry / N+1 |
 | `entities/`, `migrations/` | схема TypeORM |
+
+Realtime-файли в `orders/`: `order-events.service.ts` (шина Subject + буфер), `orders.gateway.ts` (кімнати), `order-events.controller.ts` (SSE + PATCH status). Headless-демо: `scripts/realtime-demo.mjs`.
 
 ## Встановлення
 
@@ -33,6 +38,62 @@ npm start
 ```
 
 Сервер: `http://localhost:3000`
+
+Збірка — `nest build` → `node dist` (`npm start`). Не запускай через `tsx`: декоратор-метадані WebSocket gateway не емітяться.
+
+## Realtime (ДЗ #18)
+
+Передумова: Postgres піднятий, міграції й seed застосовані, `npm start` слухає `:3000`.
+
+### SSE
+
+```bash
+# Content-Type має бути text/event-stream
+curl -sN --max-time 2 -D - -o /dev/null \
+  http://localhost:3000/orders/order-1/events | grep -i '^content-type'
+
+# Зміна статусу (події накопичуються в памʼяті процесу — без рестарту між кроками)
+curl -s -X PATCH http://localhost:3000/orders/order-1/status \
+  -H 'Content-Type: application/json' \
+  -H 'X-User-Id: buyer-1' \
+  -H 'X-User-Role: buyer' \
+  -d '{"status":"shipped"}'
+
+# Після ≥4 змін статусу цього замовлення — пропущені події з id > 3
+curl -sN --max-time 2 -H 'Last-Event-ID: 3' \
+  http://localhost:3000/orders/order-1/events | grep '^id:' | head -1
+```
+
+### Ізоляція кімнат (WebSocket)
+
+Скрипт сам створює два замовлення для `buyer-1`, чекає ack від `join`, потім змінює статус замовлення A.
+
+```bash
+# різні кімнати — B не чує подію A
+node scripts/realtime-demo.mjs; echo "exit=$?"
+# A_RECEIVED=1
+# B_RECEIVED=0
+# exit=0
+
+# контроль: обидва в кімнаті A — B чує
+node scripts/realtime-demo.mjs --same-room; echo "exit=$?"
+# A_RECEIVED=1
+# B_RECEIVED=1
+# exit=0
+```
+
+При двох інстансах in-memory `Subject` і кімнати socket.io живуть лише в тому процесі, який прийняв зʼєднання: emit на іншому інстансі клієнт не побачить. Лікується Redis-адаптером socket.io і спільним pub/sub для шини.
+
+## Trade-offs: WebSocket vs SSE
+
+Для нотифікацій про зміну статусу замовлення я б лишив **SSE**: канал односторонній (сервер → клієнт), відновлення вже є через `Last-Event-ID`, і це звичайний HTTP без Upgrade. WebSocket виправданий, коли клієнт сам шле команди в той самий канал (у нас це `join` у кімнату) або коли потрібен двосторонній діалог.
+
+| Критерій | WebSocket | SSE |
+| --- | --- | --- |
+| Напрям каналу | Двосторонній (клієнт ↔ сервер) | Лише сервер → клієнт |
+| Реконект / відновлення | Вручну на manager (`socket.io.on('reconnect_attempt')`); пропущені події треба відновлювати самому | Браузер сам перепідключається і шле `Last-Event-ID` |
+| Вимоги до інфраструктури | HTTP Upgrade, sticky sessions або Redis-адаптер у кластері | Звичайний HTTP; проксі не повинен буферизувати потік |
+| Ціна на подію | Постійне зʼєднання + бінарний framing | Довге HTTP-зʼєднання + текстові кадри |
 
 ## Configuration
 

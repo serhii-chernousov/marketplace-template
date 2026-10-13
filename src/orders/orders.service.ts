@@ -8,6 +8,8 @@ import {
 import { Order as OrderRow } from '../entities/order.entity'
 import { Product } from '../entities/product.entity'
 import { User } from '../entities/user.entity'
+import { createOrderPlacedEvent } from '../messaging/order-placed.event'
+import { publishOrderPlaced } from '../messaging/order-placed.publisher'
 import { ProblemException } from '../types/problem.exception'
 import { Order, StoreService } from '../store/store.service'
 import { OrderEventsService } from './order-events.service'
@@ -258,6 +260,18 @@ export class OrdersService {
 				)
 			}
 			throw err
+		}
+
+		// Order is already committed; broker publish is a separate commit.
+		// Gap (order without event) closes in HW #22 via transactional outbox.
+		if (process.env.BROKER_URL?.trim()) {
+			await publishOrderPlaced(
+				createOrderPlacedEvent({
+					orderId: `order-${result.orderId}`,
+					userId: buyer.id,
+					totalCents: result.totalCents,
+				}),
+			)
 		}
 
 		for (const item of resolved) {

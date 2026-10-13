@@ -8,6 +8,7 @@ export const envSchema = z.object({
 	DB_PASSWORD: z.string().min(1),
 	DB_NAME: z.string().min(1),
 	DB_URL: z.string().min(1),
+	BROKER_URL: z.string().min(1).optional(),
 	LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
 	TIMEOUT_MS: z.coerce.number().int().positive().default(5000),
 })

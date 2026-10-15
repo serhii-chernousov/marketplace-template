@@ -10,6 +10,7 @@ import { Product } from '../entities/product.entity'
 import { User } from '../entities/user.entity'
 import { ProblemException } from '../types/problem.exception'
 import { Order, StoreService } from '../store/store.service'
+import { OrderEventsService } from './order-events.service'
 
 /** OpenAPI demo headers → seed emails (ДЗ #09 curls stay valid). */
 const USER_ALIASES: Record<string, string> = {
@@ -22,12 +23,36 @@ const USER_ALIASES: Record<string, string> = {
 	'seller-2': 'seller2@shop.local',
 }
 
+const ALLOWED_STATUSES: ReadonlySet<string> = new Set([
+	'pending',
+	'paid',
+	'shipped',
+	'delivered',
+	'cancelled',
+])
+
+export function canonicalOrderId(id: string): string {
+	const match = /^order-(\d+)$/.exec(id)
+	if (match) {
+		return `order-${match[1]}`
+	}
+	if (/^\d+$/.test(id)) {
+		return `order-${id}`
+	}
+	return id
+}
+
+export function toDbOrderId(id: string): string {
+	return /^order-(\d+)$/.exec(id)?.[1] ?? id
+}
+
 @Injectable()
 export class OrdersService {
 	constructor(
 		private readonly store: StoreService,
 		private readonly checkout: CheckoutService,
 		private readonly dataSource: DataSource,
+		private readonly orderEvents: OrderEventsService,
 	) {}
 
 	list(userId: string, role: string, limit?: number, cursor?: string) {
@@ -51,45 +76,54 @@ export class OrdersService {
 	}
 
 	async getById(id: string, userId: string, role: string): Promise<Order> {
-		const dbId = /^order-(\d+)$/.exec(id)?.[1] ?? id
-		const rows = await this.dataSource
-			.getRepository(OrderRow)
-			.createQueryBuilder('ord')
-			.leftJoinAndSelect('ord.user', 'buyer')
-			.leftJoinAndSelect('ord.items', 'item')
-			.leftJoinAndSelect('item.product', 'product')
-			.leftJoinAndSelect('product.seller', 'seller')
-			.where('CAST(ord.id AS text) = :dbId', { dbId })
-			.getMany()
-		const row = rows[0]
-		row?.items?.sort((left, right) =>
-			left.id < right.id ? -1 : left.id > right.id ? 1 : 0,
+		const { order } = await this.loadAuthorizedOrder(id, userId, role)
+		return order
+	}
+
+	/**
+	 * Throws 404/403 if the caller cannot read the order.
+	 * Used by WebSocket join — same ownership rules as GET /v1/orders/:id.
+	 */
+	async assertCanRead(
+		id: string,
+		userId: string,
+		role: string,
+	): Promise<void> {
+		await this.loadAuthorizedOrder(id, userId, role)
+	}
+
+	async updateStatus(
+		id: string,
+		userId: string,
+		role: string,
+		status: string,
+	): Promise<{ id: string; status: string }> {
+		if (!ALLOWED_STATUSES.has(status)) {
+			throw new ProblemException(
+				400,
+				'https://marketplace.local/problems/invalid-status',
+				'Invalid status',
+				`Status must be one of: ${[...ALLOWED_STATUSES].join(', ')}`,
+				`/orders/${id}/status`,
+			)
+		}
+
+		const { canonicalId, row } = await this.loadAuthorizedOrder(
+			id,
+			userId,
+			role,
+			`/orders/${id}/status`,
 		)
 
-		const seller = row?.items[0]?.product?.seller
-		if (!row?.user || !row.items?.length || !seller) {
-			throw new ProblemException(
-				404,
-				'https://marketplace.local/problems/order-not-found',
-				'Order not found',
-				'Order with the given id does not exist',
-				`/v1/orders/${id}`,
+		await this.dataSource.transaction(async (manager) => {
+			await manager.query(
+				`UPDATE orders SET status = $1 WHERE id = $2`,
+				[status, row.id],
 			)
-		}
+		})
 
-		const order = this.toApiOrder(row, seller)
-		const allowed = await this.callerCanRead(role, userId, row.user, seller)
-		if (!allowed) {
-			throw new ProblemException(
-				403,
-				'https://marketplace.local/problems/forbidden',
-				'Forbidden',
-				'You do not have access to this order',
-				`/v1/orders/${id}`,
-			)
-		}
-
-		return order
+		this.orderEvents.publish(canonicalId, status)
+		return { id: canonicalId, status }
 	}
 
 	async create(
@@ -257,6 +291,62 @@ export class OrdersService {
 		})
 
 		return { order, location, replay: false }
+	}
+
+	private async loadAuthorizedOrder(
+		id: string,
+		userId: string,
+		role: string,
+		instancePath?: string,
+	): Promise<{
+		canonicalId: string
+		order: Order
+		row: OrderRow
+	}> {
+		const instance = instancePath ?? `/v1/orders/${id}`
+		const dbId = toDbOrderId(id)
+		const rows = await this.dataSource
+			.getRepository(OrderRow)
+			.createQueryBuilder('ord')
+			.leftJoinAndSelect('ord.user', 'buyer')
+			.leftJoinAndSelect('ord.items', 'item')
+			.leftJoinAndSelect('item.product', 'product')
+			.leftJoinAndSelect('product.seller', 'seller')
+			.where('CAST(ord.id AS text) = :dbId', { dbId })
+			.getMany()
+		const row = rows[0]
+		row?.items?.sort((left, right) =>
+			left.id < right.id ? -1 : left.id > right.id ? 1 : 0,
+		)
+
+		const seller = row?.items[0]?.product?.seller
+		if (!row?.user || !row.items?.length || !seller) {
+			throw new ProblemException(
+				404,
+				'https://marketplace.local/problems/order-not-found',
+				'Order not found',
+				'Order with the given id does not exist',
+				instance,
+			)
+		}
+
+		const order = this.toApiOrder(row, seller)
+		const allowed = await this.callerCanRead(role, userId, row.user, seller)
+		if (!allowed) {
+			throw new ProblemException(
+				403,
+				'https://marketplace.local/problems/forbidden',
+				'Forbidden',
+				'You do not have access to this order',
+				instance,
+			)
+		}
+
+		return {
+			canonicalId: canonicalOrderId(id),
+			order,
+			row,
+		}
 	}
 
 	private async resolveBuyer(headerUserId: string): Promise<User | null> {

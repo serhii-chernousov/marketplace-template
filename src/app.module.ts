@@ -40,6 +40,7 @@ export class AppModule implements NestModule {
 					apiSpec: join(process.cwd(), 'openapi', 'openapi.yaml'),
 					validateRequests: true,
 					validateResponses: true,
+					ignorePaths: /\/orders\/[^/]+\/(events|status)$|^\/socket\.io/,
 				}),
 			)
 			.exclude(

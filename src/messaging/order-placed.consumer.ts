@@ -1,4 +1,5 @@
 import type { Channel, ChannelModel, ConsumeMessage } from 'amqplib'
+import { readPgCode } from '../common/with-retry'
 import { EffectStore } from './effect-store'
 import { OrderPlacedEvent } from './order-placed.event'
 import { ORDER_PLACED_QUEUE } from './topology'
@@ -7,6 +8,55 @@ export interface ConsumerHandle {
 	connection: ChannelModel
 	channel: Channel
 	consumerTag: string
+	/** Times this consumer called reject(msg, false). */
+	rejected: number
+}
+
+const TRANSIENT_NODE = new Set([
+	'EAI_AGAIN',
+	'ECONNABORTED',
+	'ECONNREFUSED',
+	'ECONNRESET',
+	'EHOSTUNREACH',
+	'ENETDOWN',
+	'ENETUNREACH',
+	'ENOTFOUND',
+	'EPIPE',
+	'ETIMEDOUT',
+])
+
+const TRANSIENT_MESSAGE =
+	/connection terminated|not queryable|could not connect to server|the database system is (starting up|shutting down)|sorry, too many clients already/i
+
+function isTransientCode(code: string): boolean {
+	if (TRANSIENT_NODE.has(code) || code === '55P03') {
+		return true
+	}
+	return code.length === 5 && /^(08|40|53|57)/.test(code)
+}
+
+/**
+ * DB blips and serialization conflicts must be requeued.
+ * Bad payloads and data errors are permanent and belong in the DLQ.
+ */
+export function isTransientConsumerError(err: unknown): boolean {
+	const seen = new Set<unknown>()
+	const visit = (current: unknown): boolean => {
+		if (!current || typeof current !== 'object' || seen.has(current)) {
+			return false
+		}
+		seen.add(current)
+		const code = readPgCode(current)
+		if (code && isTransientCode(code)) {
+			return true
+		}
+		if (current instanceof Error && TRANSIENT_MESSAGE.test(current.message)) {
+			return true
+		}
+		const nested = current as { cause?: unknown; driverError?: unknown }
+		return visit(nested.driverError) || visit(nested.cause)
+	}
+	return visit(err)
 }
 
 function parseEvent(msg: ConsumeMessage): OrderPlacedEvent {
@@ -32,6 +82,17 @@ export async function startOrderPlacedConsumer(
 	store: EffectStore,
 ): Promise<ConsumerHandle> {
 	const crashBeforeAck = process.env.CRASH_BEFORE_ACK === '1'
+	const handle: ConsumerHandle = {
+		connection,
+		channel,
+		consumerTag: '',
+		rejected: 0,
+	}
+
+	const rejectPermanent = (message: ConsumeMessage): void => {
+		channel.reject(message, false)
+		handle.rejected += 1
+	}
 
 	const { consumerTag } = await channel.consume(
 		ORDER_PLACED_QUEUE,
@@ -44,7 +105,7 @@ export async function startOrderPlacedConsumer(
 				await store.recordDelivery(event.eventId)
 
 				if (event.poison) {
-					channel.reject(msg, false)
+					rejectPermanent(msg)
 					return
 				}
 
@@ -59,13 +120,18 @@ export async function startOrderPlacedConsumer(
 				await store.markAcked(event.eventId)
 			} catch (err) {
 				console.error('order.placed consumer error', err)
-				channel.reject(msg, false)
+				if (isTransientConsumerError(err)) {
+					channel.nack(msg, false, true)
+					return
+				}
+				rejectPermanent(msg)
 			}
 		},
 		{ noAck: false },
 	)
 
-	return { connection, channel, consumerTag }
+	handle.consumerTag = consumerTag
+	return handle
 }
 
 export async function stopConsumer(handle: ConsumerHandle): Promise<void> {

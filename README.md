@@ -51,6 +51,8 @@ npm start
 ```bash
 # Content-Type має бути text/event-stream
 curl -sN --max-time 2 -D - -o /dev/null \
+  -H 'X-User-Id: buyer-1' \
+  -H 'X-User-Role: buyer' \
   http://localhost:3000/orders/order-1/events | grep -i '^content-type'
 
 # Зміна статусу (події накопичуються в памʼяті процесу — без рестарту між кроками)
@@ -62,6 +64,8 @@ curl -s -X PATCH http://localhost:3000/orders/order-1/status \
 
 # Після ≥4 змін статусу цього замовлення — пропущені події з id > 3
 curl -sN --max-time 2 -H 'Last-Event-ID: 3' \
+  -H 'X-User-Id: buyer-1' \
+  -H 'X-User-Role: buyer' \
   http://localhost:3000/orders/order-1/events | grep '^id:' | head -1
 ```
 
@@ -116,7 +120,7 @@ node scripts/realtime-demo.mjs --same-room; echo "exit=$?"
 
 **Чому це at-least-once, а не exactly-once.** Доставка at-least-once: пізній ack (або обрив до ack) повертає те саме повідомлення, тож споживач може отримати його двічі. Exactly-once на рівні доставки не існує ні в кого — формулювання «RabbitMQ дає exactly-once» хибне. Exactly-once **результат** дає звʼязка: at-least-once доставка + ідемпотентний ефект `INSERT INTO order_placed_effects … ON CONFLICT (event_id) DO NOTHING`. Ідемпотентність — властивість операції; `eventId` — ключ, яким повтор роблять безпечним. Дедуп у `Set` процесу не рахується: він не переживає рестарт і не існує між репліками.
 
-Отруєне повідомлення (`poison: true`) іде в DLQ через `channel.reject(msg, false)` з причиною `rejected`. На RabbitMQ 4.x `nack(requeue=true)` не інкрементить delivery-count і може крутити повідомлення вічно; для DLQ через `delivery_limit` потрібен `reject(requeue=true)` на 4.3+ — у цьому ДЗ достатньо явного reject без requeue.
+Отруєне повідомлення (`poison: true`) іде в DLQ через `channel.reject(msg, false)` з причиною `rejected`. Обрив до Postgres і інші transient-коди (`08*`, `40*`, `53*`, `57*`, `55P03`, мережеві `ECONNRESET` / `ETIMEDOUT`) повертають повідомлення в чергу через `nack(requeue=true)`. Permanent (битий JSON, невалідний payload, SQLSTATE `22*` / `23*`) теж ідуть у DLQ без requeue. На RabbitMQ 4.x `nack(requeue=true)` не інкрементить delivery-count і може крутити повідомлення вічно; для DLQ через `delivery_limit` потрібен `reject(requeue=true)` на 4.3+ — отруту сюди так не відправляємо.
 
 **Межа ДЗ #22.** Checkout і publish — два окремі commit (Postgres і брокер). Спільного COMMIT між ними немає: впасти між ними — і замовлення є, а події немає. Закриває це transactional outbox. Позначка обробки й ефект у споживача тут одна вставка, тож другої щілини всередині консюмера немає.
 
@@ -137,7 +141,7 @@ TypeORM CLI (`src/database/data-source.ts`) читає `DB_HOST`, `DB_PORT`, `DB
 | `DB_PASSWORD` | так                | Пароль для TypeORM DataSource (`migrate` / `seed` / `demo` / `report`) |
 | `DB_NAME`     | так                | Ім'я бази (`shop`)                                                   |
 | `DB_URL`      | так                | Рядок підключення Nest; джерело — сховище                            |
-| `BROKER_URL`  | ні                 | AMQP URL RabbitMQ (`amqp://…@host:5672`); у Infisical `dev` поруч із `DB_*` |
+| `BROKER_URL`  | так                | AMQP URL RabbitMQ (`amqp://…@host:5672`); у Infisical `dev` поруч із `DB_*` |
 | `LOG_LEVEL`   | ні (дефолт `info`) | `debug` \| `info` \| `warn` \| `error`                               |
 | `TIMEOUT_MS`  | ні (дефолт `5000`) | Таймаут у мс                                                         |
 

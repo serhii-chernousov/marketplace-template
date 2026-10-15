@@ -35,4 +35,19 @@ describe('OrderEventsService', () => {
 		const b = bus.publish('order-1', 'shipped')
 		expect(b.id).toBeGreaterThan(a.id)
 	})
+
+	it('numbers each order on its own sequence', () => {
+		for (let step = 0; step < 5; step++) {
+			bus.publish('order-1', 'paid')
+		}
+		bus.publish('order-2', 'shipped')
+		bus.publish('order-2', 'delivered')
+
+		const next = bus.publish('order-1', 'cancelled')
+
+		expect(next.id).toBe(6)
+		expect(bus.replayAfter('order-2', 0).map((event) => event.id)).toEqual([
+			1, 2,
+		])
+	})
 })

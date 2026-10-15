@@ -79,7 +79,8 @@ async function main(): Promise<void> {
 	const dlq = await queueDepth(inspectChannel, ORDER_PLACED_DLQ)
 	const counts = await store.counts()
 
-	console.log('rejected=1')
+	const rejected = consumer.rejected
+	console.log(`rejected=${rejected}`)
 	console.log(`work=${work}`)
 	console.log(`dlq=${dlq}`)
 	console.log(`dlq-reason=${reason}`)
@@ -92,6 +93,7 @@ async function main(): Promise<void> {
 		'delivery_limit',
 	])
 	const ok =
+		rejected === 1 &&
 		work === 0 &&
 		dlq === 1 &&
 		counts.effect === 0 &&

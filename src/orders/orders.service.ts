@@ -84,7 +84,7 @@ export class OrdersService {
 
 	/**
 	 * Throws 404/403 if the caller cannot read the order.
-	 * Used by WebSocket join — same ownership rules as GET /v1/orders/:id.
+	 * Used by WebSocket join and SSE — same ownership rules as GET /v1/orders/:id.
 	 */
 	async assertCanRead(
 		id: string,
@@ -264,15 +264,13 @@ export class OrdersService {
 
 		// Order is already committed; broker publish is a separate commit.
 		// Gap (order without event) closes in HW #22 via transactional outbox.
-		if (process.env.BROKER_URL?.trim()) {
-			await publishOrderPlaced(
-				createOrderPlacedEvent({
-					orderId: `order-${result.orderId}`,
-					userId: buyer.id,
-					totalCents: result.totalCents,
-				}),
-			)
-		}
+		await publishOrderPlaced(
+			createOrderPlacedEvent({
+				orderId: `order-${result.orderId}`,
+				userId: buyer.id,
+				totalCents: result.totalCents,
+			}),
+		)
 
 		for (const item of resolved) {
 			const listing = this.store.listings.get(item.listing_id)

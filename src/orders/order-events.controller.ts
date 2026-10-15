@@ -21,6 +21,25 @@ function writeSseFrame(res: Response, event: OrderStatusEvent): void {
 }
 
 /**
+ * Absent header replays the buffer from the start.
+ * A non-negative integer is a cursor. Anything else means "from now" — no replay.
+ */
+export function parseLastEventId(header: string | undefined): number | null {
+	if (header === undefined) {
+		return 0
+	}
+	const value = header.trim()
+	if (!/^(0|[1-9]\d*)$/.test(value)) {
+		return null
+	}
+	const id = Number(value)
+	if (!Number.isSafeInteger(id)) {
+		return null
+	}
+	return id
+}
+
+/**
  * Realtime HTTP surface (outside /v1 OpenAPI contract).
  * GET /orders/:id/events — SSE; PATCH /orders/:id/status — status mutation + bus publish.
  */
@@ -32,14 +51,16 @@ export class OrderEventsController {
 	) {}
 
 	@Get(':id/events')
-	streamEvents(
+	async streamEvents(
 		@Param('id') id: string,
 		@Headers('last-event-id') lastEventIdHeader: string | undefined,
+		@Headers('x-user-id') userId: string | undefined,
+		@Headers('x-user-role') role: string | undefined,
 		@Req() req: Request,
 		@Res() res: Response,
-	): void {
+	): Promise<void> {
 		const orderId = canonicalOrderId(id)
-		const lastEventId = Number(lastEventIdHeader ?? 0) || 0
+		await this.orders.assertCanRead(orderId, userId ?? '', role ?? '')
 
 		res.writeHead(200, {
 			'Content-Type': 'text/event-stream',
@@ -48,13 +69,18 @@ export class OrderEventsController {
 		})
 		res.write('retry: 1000\n\n')
 
-		for (const event of this.orderEvents.replayAfter(orderId, lastEventId)) {
-			writeSseFrame(res, event)
+		const lastEventId = parseLastEventId(lastEventIdHeader)
+		if (lastEventId !== null) {
+			for (const event of this.orderEvents.replayAfter(orderId, lastEventId)) {
+				writeSseFrame(res, event)
+			}
 		}
 
-		const subscription = this.orderEvents.changes$(orderId).subscribe((event) => {
-			writeSseFrame(res, event)
-		})
+		const subscription = this.orderEvents
+			.changes$(orderId)
+			.subscribe((event) => {
+				writeSseFrame(res, event)
+			})
 
 		req.on('close', () => {
 			subscription.unsubscribe()

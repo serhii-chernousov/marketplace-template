@@ -9,35 +9,49 @@ export interface OrderStatusEvent {
 
 const BUFFER_LIMIT = 50
 
+interface OrderEventStream {
+	nextId: number
+	buffer: OrderStatusEvent[]
+}
+
 /**
  * In-process event bus for order status changes.
- * Subject fans out live events; a per-order buffer supports SSE Last-Event-ID replay.
+ * Subject fans out live events; each order has its own id sequence and replay buffer.
  */
 @Injectable()
 export class OrderEventsService {
-	private nextId = 1
 	private readonly subject = new Subject<OrderStatusEvent>()
-	private readonly buffers = new Map<string, OrderStatusEvent[]>()
+	private readonly streams = new Map<string, OrderEventStream>()
 
 	publish(orderId: string, status: string): OrderStatusEvent {
+		const stream = this.streamFor(orderId)
 		const event: OrderStatusEvent = {
-			id: this.nextId++,
+			id: stream.nextId,
 			orderId,
 			status,
 		}
-		const buffer = this.buffers.get(orderId) ?? []
-		buffer.push(event)
-		if (buffer.length > BUFFER_LIMIT) {
-			buffer.splice(0, buffer.length - BUFFER_LIMIT)
+		stream.nextId += 1
+		stream.buffer.push(event)
+		if (stream.buffer.length > BUFFER_LIMIT) {
+			stream.buffer.splice(0, stream.buffer.length - BUFFER_LIMIT)
 		}
-		this.buffers.set(orderId, buffer)
 		this.subject.next(event)
 		return event
 	}
 
 	replayAfter(orderId: string, lastEventId: number): OrderStatusEvent[] {
-		const buffer = this.buffers.get(orderId) ?? []
+		const buffer = this.streams.get(orderId)?.buffer ?? []
 		return buffer.filter((event) => event.id > lastEventId)
+	}
+
+	private streamFor(orderId: string): OrderEventStream {
+		const existing = this.streams.get(orderId)
+		if (existing) {
+			return existing
+		}
+		const created: OrderEventStream = { nextId: 1, buffer: [] }
+		this.streams.set(orderId, created)
+		return created
 	}
 
 	changes$(orderId: string): Observable<OrderStatusEvent> {

@@ -1,4 +1,4 @@
-# Marketplace API (hw-18)
+# Marketplace API (hw-19)
 
 ## Ресурси
 
@@ -20,7 +20,8 @@
 | `database/` | CLI DataSource, `DatabaseModule`, `DbService` |
 | `store/` | in-memory catalog/idempotency для OpenAPI |
 | `common/` | `with-retry`, `asRows` |
-| `demo/` | CLI-скрипти гонки / воркерів / retry / N+1 |
+| `demo/` | CLI-скрипти гонки / воркерів / retry / N+1 / RabbitMQ |
+| `messaging/` | топологія RabbitMQ, publish/consume `order.placed`, ідемпотентний ефект |
 | `entities/`, `migrations/` | схема TypeORM |
 
 Realtime-файли в `orders/`: `order-events.service.ts` (шина Subject + буфер), `orders.gateway.ts` (кімнати), `order-events.controller.ts` (SSE + PATCH status). Headless-демо: `scripts/realtime-demo.mjs`.
@@ -50,6 +51,8 @@ npm start
 ```bash
 # Content-Type має бути text/event-stream
 curl -sN --max-time 2 -D - -o /dev/null \
+  -H 'X-User-Id: buyer-1' \
+  -H 'X-User-Role: buyer' \
   http://localhost:3000/orders/order-1/events | grep -i '^content-type'
 
 # Зміна статусу (події накопичуються в памʼяті процесу — без рестарту між кроками)
@@ -61,6 +64,8 @@ curl -s -X PATCH http://localhost:3000/orders/order-1/status \
 
 # Після ≥4 змін статусу цього замовлення — пропущені події з id > 3
 curl -sN --max-time 2 -H 'Last-Event-ID: 3' \
+  -H 'X-User-Id: buyer-1' \
+  -H 'X-User-Role: buyer' \
   http://localhost:3000/orders/order-1/events | grep '^id:' | head -1
 ```
 
@@ -95,6 +100,32 @@ node scripts/realtime-demo.mjs --same-room; echo "exit=$?"
 | Вимоги до інфраструктури | HTTP Upgrade, sticky sessions або Redis-адаптер у кластері | Звичайний HTTP; проксі не повинен буферизувати потік |
 | Ціна на подію | Постійне зʼєднання + бінарний framing | Довге HTTP-зʼєднання + текстові кадри |
 
+## Async-події через RabbitMQ
+
+ДЗ #18 віддавав подію лише тим, хто вже підключений. Тут між продюсером і споживачем стоїть брокер: повідомлення лежить у черзі, доки зʼявиться одержувач.
+
+**Топологія** (оголошує споживач / bootstrap, не продюсер): topic-exchange `shop.events`, quorum-черга `shop.order.placed` з `x-dead-letter-exchange`, binding на routing key `order.placed`, окремий fanout DLX + DLQ. Після успішного checkout `OrdersService` публікує `order.placed` через confirm-канал (`createConfirmChannel` + `waitForConfirms`). Confirm означає «брокер прийняв publish», а не «хтось отримав»: без binding повідомлення зникає, а confirm усе одно позитивний.
+
+**Prefetch.** У коді `channel.prefetch(20)`. Формула: `prefetch × час обробки < consumer_timeout` (стокові 30 хв). Один ефект — `INSERT` ≈ 5–20 мс, тож `20 × 20 мс = 0.4 с` ≪ 30 хв. Prefetch=1 був би правильним для важких задач і зайвим RTT для задач по кілька мілісекунд; prefetch=500 при обробці по 10 с дає 83 хв і пробиває таймаут.
+
+**Власні прогони:**
+
+| Демо | Вихід |
+| --- | --- |
+| `demo:publish` | `published=5` `delivered=5` `effect=5` `acked=5` `dlq=0` `prefetch=20` |
+| `demo:dlq` | `rejected=1` `work=0` `dlq=1` `dlq-reason=rejected` `effect=0` |
+| `demo:duplicate` | `deliveries=2` `effect=1` `skipped=1` |
+
+Дубль у `demo:duplicate` зроблено через `SIGKILL` дочірнього споживача після ефекту і до `ack`: процес зникає, ОС закриває сокет, брокер бачить обрив і повертає unacked. `channel.close()` для цього не використовуємо — це коректне завершення, а не падіння сервісу.
+
+**Чому це at-least-once, а не exactly-once.** Доставка at-least-once: пізній ack (або обрив до ack) повертає те саме повідомлення, тож споживач може отримати його двічі. Exactly-once на рівні доставки не існує ні в кого — формулювання «RabbitMQ дає exactly-once» хибне. Exactly-once **результат** дає звʼязка: at-least-once доставка + ідемпотентний ефект `INSERT INTO order_placed_effects … ON CONFLICT (event_id) DO NOTHING`. Ідемпотентність — властивість операції; `eventId` — ключ, яким повтор роблять безпечним. Дедуп у `Set` процесу не рахується: він не переживає рестарт і не існує між репліками.
+
+Отруєне повідомлення (`poison: true`) іде в DLQ через `channel.reject(msg, false)` з причиною `rejected`. Обрив до Postgres і інші transient-коди (`08*`, `40*`, `53*`, `57*`, `55P03`, мережеві `ECONNRESET` / `ETIMEDOUT`) повертають повідомлення в чергу через `nack(requeue=true)`. Permanent (битий JSON, невалідний payload, SQLSTATE `22*` / `23*`) теж ідуть у DLQ без requeue. На RabbitMQ 4.x `nack(requeue=true)` не інкрементить delivery-count і може крутити повідомлення вічно; для DLQ через `delivery_limit` потрібен `reject(requeue=true)` на 4.3+ — отруту сюди так не відправляємо.
+
+**Межа ДЗ #22.** Checkout і publish — два окремі commit (Postgres і брокер). Спільного COMMIT між ними немає: впасти між ними — і замовлення є, а події немає. Закриває це transactional outbox. Позначка обробки й ефект у споживача тут одна вставка, тож другої щілини всередині консюмера немає.
+
+Management UI: `http://127.0.0.1:15672` (app/app). AMQP — порт **5672**, не 15672.
+
 ## Configuration
 
 Змінні описує Zod-схема `src/config/env.schema.ts`. Контракт для git — `.env.example`; реальний `.env` у `.gitignore` і не потрапляє в Docker-образ. У `.env.example` паролі фейкові.
@@ -110,6 +141,7 @@ TypeORM CLI (`src/database/data-source.ts`) читає `DB_HOST`, `DB_PORT`, `DB
 | `DB_PASSWORD` | так                | Пароль для TypeORM DataSource (`migrate` / `seed` / `demo` / `report`) |
 | `DB_NAME`     | так                | Ім'я бази (`shop`)                                                   |
 | `DB_URL`      | так                | Рядок підключення Nest; джерело — сховище                            |
+| `BROKER_URL`  | так                | AMQP URL RabbitMQ (`amqp://…@host:5672`); у Infisical `dev` поруч із `DB_*` |
 | `LOG_LEVEL`   | ні (дефолт `info`) | `debug` \| `info` \| `warn` \| `error`                               |
 | `TIMEOUT_MS`  | ні (дефолт `5000`) | Таймаут у мс                                                         |
 
@@ -330,6 +362,7 @@ bash scripts/with-secrets.sh dev bash scripts/restore-drill.sh
 ```bash
 docker compose up -d --wait
 export DB_HOST=127.0.0.1 DB_PORT=6432 DB_USER=admin DB_PASSWORD=admin-secret DB_NAME=shop
+export BROKER_URL=amqp://app:app@127.0.0.1:5672 # ← схема amqp, порт AMQP (не 15672)
 export SKIP_VAULT=1    # у грейдера немає доступу до сховища
 npm ci && npx tsc --noEmit
 npm run build
@@ -342,6 +375,9 @@ npm run report
 npm run demo:race
 npm run demo:workers
 npm run demo:retry
+npm run demo:publish
+npm run demo:dlq
+npm run demo:duplicate
 ```
 
 Скрипти `backup.sh` / `restore-drill.sh` читають `DATABASE_URL` з оточення; `with-secrets.sh` при `SKIP_VAULT=1` не ходить у Infisical і просто виконує команду.

@@ -14,14 +14,14 @@
 
 | Каталог | Призначення |
 | --- | --- |
-| `checkout/` | `CheckoutService` — транзакційний checkout |
+| `checkout/` | `CheckoutService` — транзакційний checkout і запис у outbox |
 | `orders/`, `listings/`, `health/` | Nest feature-модулі (controller + service + gateway) |
 | `jobs/` | черга `FOR UPDATE SKIP LOCKED` |
 | `database/` | CLI DataSource, `DatabaseModule`, `DbService` |
 | `store/` | in-memory catalog/idempotency для OpenAPI |
 | `common/` | `with-retry`, `asRows` |
 | `demo/` | CLI-скрипти гонки / воркерів / retry / N+1 / RabbitMQ |
-| `messaging/` | топологія RabbitMQ, publish/consume `order.placed`, ідемпотентний ефект |
+| `messaging/` | RabbitMQ, transactional outbox, relay, ідемпотентний ефект |
 | `entities/`, `migrations/` | схема TypeORM |
 
 Realtime-файли в `orders/`: `order-events.service.ts` (шина Subject + буфер), `orders.gateway.ts` (кімнати), `order-events.controller.ts` (SSE + PATCH status). Headless-демо: `scripts/realtime-demo.mjs`.
@@ -122,9 +122,51 @@ node scripts/realtime-demo.mjs --same-room; echo "exit=$?"
 
 Отруєне повідомлення (`poison: true`) іде в DLQ через `channel.reject(msg, false)` з причиною `rejected`. Обрив до Postgres і інші transient-коди (`08*`, `40*`, `53*`, `57*`, `55P03`, мережеві `ECONNRESET` / `ETIMEDOUT`) повертають повідомлення в чергу через `nack(requeue=true)`. Permanent (битий JSON, невалідний payload, SQLSTATE `22*` / `23*`) теж ідуть у DLQ без requeue. На RabbitMQ 4.x `nack(requeue=true)` не інкрементить delivery-count і може крутити повідомлення вічно; для DLQ через `delivery_limit` потрібен `reject(requeue=true)` на 4.3+ — отруту сюди так не відправляємо.
 
-**Межа ДЗ #22.** Checkout і publish — два окремі commit (Postgres і брокер). Спільного COMMIT між ними немає: впасти між ними — і замовлення є, а події немає. Закриває це transactional outbox. Позначка обробки й ефект у споживача тут одна вставка, тож другої щілини всередині консюмера немає.
+**Межа, яку закриває outbox.** Раніше checkout і publish були двома commit: впасти між ними — і замовлення є, а події немає. Тепер рядок `outbox` комітиться разом із замовленням, а брокер бачить подію лише з relay. Деталі й числа прогонів — у розділі нижче.
 
 Management UI: `http://127.0.0.1:15672` (app/app). AMQP — порт **5672**, не 15672.
+
+## Outbox та ідемпотентність
+
+Оформлення замовлення пише бізнес-рядок і подію `order.placed` одним `COMMIT`. `CheckoutService` у тій самій транзакції, що stock, balance, order, order_item і job, вставляє рядок у `outbox`. У payload лежить контракт з `toOrderPlacedEvent` (id події, id замовлення, покупець, сума в копійках), а не ORM-сутність. Брокера ця транзакція не викликає: RabbitMQ не вміє відкочуватись разом із Postgres.
+
+Relay (`src/messaging/outbox-relay.ts`) опитує таблицю:
+
+```sql
+SELECT id, payload
+FROM outbox
+WHERE published_at IS NULL
+ORDER BY created_at, id
+FOR UPDATE SKIP LOCKED
+LIMIT N
+```
+
+Далі `publish`, і лише після confirm брокера — `UPDATE published_at`. `SKIP LOCKED` віддає іншим воркерам інші рядки, замість того щоб вишикувати їх у чергу на один лок. `ORDER BY` задає лише порядок вибірки, не порядок доставки: глобального порядку між воркерами немає. Курсор «усі id більші за останній» тут не годиться — `bigint identity` видає номер на `nextval`, а рядок стає видимим на `COMMIT`, тож пізніший commit із меншим id губиться. Тому фільтр — `published_at IS NULL`.
+
+**Чому не можна просто поміняти місцями publish і `UPDATE published_at`.** Якщо спершу позначити рядок винесеним, а публікувати потім, падіння між цими кроками лишає `published_at` заповненим і повідомлення, якого в брокері немає. Relay цей рядок більше не візьме — подія втрачена назавжди. Зворотний порядок (спочатку publish, потім позначка) у тій самій щілині дає дубль, а не дірку. Дубль знімає ідемпотентний ефект; втрату не лікує нічого. Навіть помилка `publish` не доводить, що повідомлення не потрапило в чергу: могла загубитись лише відповідь брокера, тож «зловив помилку → відкотив позначку → усе чисто» теж не працює.
+
+Консюмер зводить at-least-once до одного ефекту на двох рівнях, і обидва комітяться разом:
+
+1. Ефект сам по собі ідемпотентний: `INSERT INTO order_placed_effects … ON CONFLICT (event_id) DO NOTHING`. `eventId` народжується один раз у транзакції checkout і їде в payload, тож повтор тієї самої події не застосовує ефект удруге. Це не `UPDATE qty = qty - 1`, який на другій доставці списав би залишок ще раз.
+2. Inbox: `processed_messages (message_id, consumer)` пишеться в тій самій транзакції, що й ефект. Позначити обробку в Redis, а ефект записати в Postgres — це знову dual write, тільки на боці консюмера.
+
+Третій рівень — край API. `Idempotency-Key` разом із `user_id` є ключем наміру, не хешем тіла. Хеш тіла склеїв би два легітимні однакові кошики в одне замовлення. Хеш лежить у рядку поруч лише для контракту OpenAPI: той самий ключ з іншим тілом дає 422. Два запити з одним ключем дають один order, один рядок outbox і один ефект.
+
+`demo:crash-relay` не вбиває процес через `kill -9`. Після успішного publish і до `UPDATE published_at` relay кидає виняток, транзакція робить `ROLLBACK`, `published_at` лишається `NULL`, а повідомлення вже лежить у черзі. Наступний прохід публікує його вдруге.
+
+Таблиця `outbox` росте. Частковий індекс `idx_outbox_unpublished` (`WHERE published_at IS NULL`) тримає relay швидким, але heap роздувається, доки вивезені рядки не прибрати. Чистка — окремим розкладом, не в гарячому шляху: `DELETE FROM outbox WHERE published_at IS NOT NULL AND published_at < now() - interval '7 days'`. Неопубліковані рядки не чіпати.
+
+Імена колонок — snake_case з лекції (`aggregate_type`, `published_at`, …). У Debezium Outbox Event Router за замовчуванням поля без підкреслень (`aggregatetype`, `aggregateid`). При переході на CDC достатньо перевизначити `route.by.field` і `table.field.event.key` — консюмери лишаються тими самими.
+
+**Власні прогони** (після `docker compose up -d --wait`, `npm run build`, `npm run migrate`, `SKIP_VAULT=1`):
+
+| Демо | Вихід |
+| --- | --- |
+| `demo:outbox` | `requests=2` `orders=1` `outbox=1` `published=1` `deliveries=1` `effect=1` `processed=1` |
+| `demo:crash-write` | `write-failed=1` `orders=0` `outbox=0` `published=0` `deliveries=0` `effect=0` |
+| `demo:crash-relay` | `published=1` `deliveries=2` `applied=1` `effect=1` `processed=1` |
+
+Exactly-once доставки не існує — це задача двох генералів. Є at-least-once доставка плюс ідемпотентний ефект, і разом вони дають exactly-once результат. `demo:crash-relay` це показує очима: та сама подія доїхала двічі (`deliveries=2`), ефект застосовано один раз (`effect=1`).
 
 ## Configuration
 
@@ -318,7 +360,7 @@ docker compose exec -T db psql -U admin -d shop -c "SELECT 'users' AS t, count(*
 
 ## Конкурентність (ДЗ #14)
 
-Checkout у `src/checkout/checkout.service.ts` — одна `dataSource.transaction`: атомарний `UPDATE … WHERE stock >= $n RETURNING`, списання `balance_cents`, `INSERT` order + order_item + job. Нестача товару чи грошей → rollback усієї транзакції. HTTP `POST /v1/orders` іде через `OrdersService` → той самий `CheckoutService` (listing title ↔ product name, `buyer-1` → `buyer1@shop.local`).
+Checkout у `src/checkout/checkout.service.ts` — одна `dataSource.transaction`: атомарний `UPDATE … WHERE stock >= $n RETURNING`, списання `balance_cents`, `INSERT` order + order_item + job + рядок `outbox` (і ключ `Idempotency-Key`, якщо він є). Нестача товару чи грошей → rollback усієї транзакції, включно з outbox. HTTP `POST /v1/orders` іде через `OrdersService` → той самий `CheckoutService` (listing title ↔ product name, `buyer-1` → `buyer1@shop.local`).
 
 **Чому atomic UPDATE, а не `SELECT` + арифметика в JS.** `UPDATE products SET stock = stock - $n WHERE … AND stock >= $n RETURNING` одночасно перевіряє залишок і тримає row-lock до кінця транзакції. 0 рядків = відмова без вікна між читанням і записом. Окремий `SELECT … FOR UPDATE` теж коректний у тій самій транзакції, але довший і легше зіпсувати, якщо забути лок перед декрементом.
 
@@ -378,6 +420,9 @@ npm run demo:retry
 npm run demo:publish
 npm run demo:dlq
 npm run demo:duplicate
+npm run demo:outbox
+npm run demo:crash-write
+npm run demo:crash-relay
 ```
 
 Скрипти `backup.sh` / `restore-drill.sh` читають `DATABASE_URL` з оточення; `with-secrets.sh` при `SKIP_VAULT=1` не ходить у Infisical і просто виконує команду.

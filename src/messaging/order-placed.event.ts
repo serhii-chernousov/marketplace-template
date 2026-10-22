@@ -13,6 +13,20 @@ export interface OrderPlacedEvent {
 	poison?: boolean
 }
 
+/**
+ * Explicit order.placed contract built from scalars.
+ * Do not spread an ORM entity — the table shape must not become the public API.
+ */
+export function toOrderPlacedEvent(order: {
+	orderId: string
+	userId: string
+	totalCents: number
+	eventId?: string
+	occurredAt?: string
+}): OrderPlacedEvent {
+	return createOrderPlacedEvent(order)
+}
+
 export function createOrderPlacedEvent(input: {
 	orderId: string
 	userId: string

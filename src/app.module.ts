@@ -8,12 +8,16 @@ import * as OpenApiValidator from 'express-openapi-validator'
 import { join } from 'path'
 import { ConfigModule } from '@nestjs/config'
 import { validate } from './config/env.schema'
+import { CatalogModule } from './catalog/catalog.module'
 import { CheckoutModule } from './checkout/checkout.module'
 import { DatabaseModule } from './database/database.module'
 import { HealthModule } from './health/health.module'
 import { JobsModule } from './jobs/jobs.module'
 import { ListingsModule } from './listings/listings.module'
 import { OrdersModule } from './orders/orders.module'
+import { RateLimitModule } from './ratelimit/ratelimit.module'
+import { RedisModule } from './redis/redis.module'
+import { SessionModule } from './session/session.module'
 import { StoreModule } from './store/store.module'
 
 @Module({
@@ -24,11 +28,15 @@ import { StoreModule } from './store/store.module'
 			envFilePath: '.env',
 		}),
 		DatabaseModule,
+		RedisModule,
+		SessionModule,
+		RateLimitModule,
 		StoreModule,
 		CheckoutModule,
 		JobsModule,
 		ListingsModule,
 		OrdersModule,
+		CatalogModule,
 		HealthModule,
 	],
 })

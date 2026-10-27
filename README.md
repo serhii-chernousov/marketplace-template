@@ -1,4 +1,4 @@
-# Marketplace API (hw-19)
+# Marketplace API (hw-23)
 
 ## Ресурси
 
@@ -12,17 +12,22 @@
 
 ## Структура `src/`
 
-| Каталог | Призначення |
-| --- | --- |
-| `checkout/` | `CheckoutService` — транзакційний checkout і запис у outbox |
-| `orders/`, `listings/`, `health/` | Nest feature-модулі (controller + service + gateway) |
-| `jobs/` | черга `FOR UPDATE SKIP LOCKED` |
-| `database/` | CLI DataSource, `DatabaseModule`, `DbService` |
-| `store/` | in-memory catalog/idempotency для OpenAPI |
-| `common/` | `with-retry`, `asRows` |
-| `demo/` | CLI-скрипти гонки / воркерів / retry / N+1 / RabbitMQ |
-| `messaging/` | RabbitMQ, transactional outbox, relay, ідемпотентний ефект |
-| `entities/`, `migrations/` | схема TypeORM |
+| Каталог                           | Призначення                                                   |
+| --------------------------------- | ------------------------------------------------------------- |
+| `checkout/`                       | `CheckoutService` — транзакційний checkout і запис у outbox  |
+| `orders/`, `listings/`, `health/` | Nest feature-модулі (controller + service + gateway)          |
+| `jobs/`                           | черга `FOR UPDATE SKIP LOCKED`                                |
+| `database/`                       | CLI DataSource, `DatabaseModule`, `DbService`                 |
+| `store/`                          | in-memory catalog/idempotency для OpenAPI                     |
+| `catalog/`                        | `GET /v1/products/:id`: картка товару, cache-aside у Redis    |
+| `common/`                         | `with-retry`, `asRows`, `sleep`                               |
+| `demo/`                           | CLI-скрипти гонки / воркерів / retry / N+1 / RabbitMQ / Redis |
+| `messaging/`                      | RabbitMQ, transactional outbox, relay, ідемпотентний ефект    |
+| `queue/`                          | BullMQ: `RatingQueueService` (продюсер), `RatingWorker`       |
+| `ratelimit/`                      | `@RateLimit` + глобальний guard, ковзне вікно в Redis         |
+| `redis/`                          | `RedisModule`: клієнти кеша й черги, `CONFIG GET`             |
+| `session/`                        | `/v1/sessions`, middleware з rolling TTL, `SessionGuard`      |
+| `entities/`, `migrations/`        | схема TypeORM                                                 |
 
 Realtime-файли в `orders/`: `order-events.service.ts` (шина Subject + буфер), `orders.gateway.ts` (кімнати), `order-events.controller.ts` (SSE + PATCH status). Headless-демо: `scripts/realtime-demo.mjs`.
 
@@ -39,6 +44,12 @@ npm start
 ```
 
 Сервер: `http://localhost:3000`
+
+Воркер черги — окремий процес без HTTP (`src/worker.ts`, `WorkerModule`):
+
+```bash
+npm run start:worker
+```
 
 Збірка — `nest build` → `node dist` (`npm start`). Не запускай через `tsx`: декоратор-метадані WebSocket gateway не емітяться.
 
@@ -93,12 +104,12 @@ node scripts/realtime-demo.mjs --same-room; echo "exit=$?"
 
 Для нотифікацій про зміну статусу замовлення я б лишив **SSE**: канал односторонній (сервер → клієнт), відновлення вже є через `Last-Event-ID`, і це звичайний HTTP без Upgrade. WebSocket виправданий, коли клієнт сам шле команди в той самий канал (у нас це `join` у кімнату) або коли потрібен двосторонній діалог.
 
-| Критерій | WebSocket | SSE |
-| --- | --- | --- |
-| Напрям каналу | Двосторонній (клієнт ↔ сервер) | Лише сервер → клієнт |
-| Реконект / відновлення | Вручну на manager (`socket.io.on('reconnect_attempt')`); пропущені події треба відновлювати самому | Браузер сам перепідключається і шле `Last-Event-ID` |
-| Вимоги до інфраструктури | HTTP Upgrade, sticky sessions або Redis-адаптер у кластері | Звичайний HTTP; проксі не повинен буферизувати потік |
-| Ціна на подію | Постійне зʼєднання + бінарний framing | Довге HTTP-зʼєднання + текстові кадри |
+| Критерій                 | WebSocket                                                                                          | SSE                                                  |
+| ------------------------ | -------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| Напрям каналу            | Двосторонній (клієнт ↔ сервер)                                                                     | Лише сервер → клієнт                                 |
+| Реконект / відновлення   | Вручну на manager (`socket.io.on('reconnect_attempt')`); пропущені події треба відновлювати самому | Браузер сам перепідключається і шле `Last-Event-ID`  |
+| Вимоги до інфраструктури | HTTP Upgrade, sticky sessions або Redis-адаптер у кластері                                         | Звичайний HTTP; проксі не повинен буферизувати потік |
+| Ціна на подію            | Постійне зʼєднання + бінарний framing                                                              | Довге HTTP-зʼєднання + текстові кадри                |
 
 ## Async-події через RabbitMQ
 
@@ -110,11 +121,11 @@ node scripts/realtime-demo.mjs --same-room; echo "exit=$?"
 
 **Власні прогони:**
 
-| Демо | Вихід |
-| --- | --- |
-| `demo:publish` | `published=5` `delivered=5` `effect=5` `acked=5` `dlq=0` `prefetch=20` |
-| `demo:dlq` | `rejected=1` `work=0` `dlq=1` `dlq-reason=rejected` `effect=0` |
-| `demo:duplicate` | `deliveries=2` `effect=1` `skipped=1` |
+| Демо             | Вихід                                                                  |
+| ---------------- | ---------------------------------------------------------------------- |
+| `demo:publish`   | `published=5` `delivered=5` `effect=5` `acked=5` `dlq=0` `prefetch=20` |
+| `demo:dlq`       | `rejected=1` `work=0` `dlq=1` `dlq-reason=rejected` `effect=0`         |
+| `demo:duplicate` | `deliveries=2` `effect=1` `skipped=1`                                  |
 
 Дубль у `demo:duplicate` зроблено через `SIGKILL` дочірнього споживача після ефекту і до `ack`: процес зникає, ОС закриває сокет, брокер бачить обрив і повертає unacked. `channel.close()` для цього не використовуємо — це коректне завершення, а не падіння сервісу.
 
@@ -174,18 +185,18 @@ Exactly-once доставки не існує — це задача двох г�
 
 TypeORM CLI (`src/database/data-source.ts`) читає `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME` з `process.env` — їх треба тримати в Infisical `dev` (основний шлях: `infisical run`). Nest HTTP піднімає той самий TypeORM через `DatabaseModule` (`DB_PASSWORD` з Config). `/db` health додатково вміє читати `secrets/db_password` (ДЗ #11) з fallback на `DB_PASSWORD`.
 
-| Змінна        | Обов'язкова        | Опис                                                                 |
-| ------------- | ------------------ | -------------------------------------------------------------------- |
-| `PORT`        | так                | HTTP-порт                                                            |
-| `DB_HOST`     | так                | Хост Postgres (`localhost` для Nest на хості)                        |
-| `DB_PORT`     | так                | Порт Postgres                                                        |
-| `DB_USER`     | так                | Роль застосунку (`app_user`) або `admin` для CLI грейдера             |
-| `DB_PASSWORD` | так                | Пароль для TypeORM DataSource (`migrate` / `seed` / `demo` / `report`) |
-| `DB_NAME`     | так                | Ім'я бази (`shop`)                                                   |
-| `DB_URL`      | так                | Рядок підключення Nest; джерело — сховище                            |
+| Змінна        | Обов'язкова        | Опис                                                                        |
+| ------------- | ------------------ | --------------------------------------------------------------------------- |
+| `PORT`        | так                | HTTP-порт                                                                   |
+| `DB_HOST`     | так                | Хост Postgres (`localhost` для Nest на хості)                               |
+| `DB_PORT`     | так                | Порт Postgres                                                               |
+| `DB_USER`     | так                | Роль застосунку (`app_user`) або `admin` для CLI грейдера                   |
+| `DB_PASSWORD` | так                | Пароль для TypeORM DataSource (`migrate` / `seed` / `demo` / `report`)      |
+| `DB_NAME`     | так                | Ім'я бази (`shop`)                                                          |
+| `DB_URL`      | так                | Рядок підключення Nest; джерело — сховище                                   |
 | `BROKER_URL`  | так                | AMQP URL RabbitMQ (`amqp://…@host:5672`); у Infisical `dev` поруч із `DB_*` |
-| `LOG_LEVEL`   | ні (дефолт `info`) | `debug` \| `info` \| `warn` \| `error`                               |
-| `TIMEOUT_MS`  | ні (дефолт `5000`) | Таймаут у мс                                                         |
+| `LOG_LEVEL`   | ні (дефолт `info`) | `debug` \| `info` \| `warn` \| `error`                                      |
+| `TIMEOUT_MS`  | ні (дефолт `5000`) | Таймаут у мс                                                                |
 
 ## Postgres (ДЗ #12)
 
@@ -334,11 +345,11 @@ Nest runtime досі ходить у базу через `pg.Pool` (`DbService`
 
 На сиді з 6 замовленнями (без argv):
 
-| Стратегія | N=3 | N=6 |
-| --- | --- | --- |
-| наївно (запит у циклі) | 9 | 15 (≥ N) |
-| relations / leftJoinAndSelect | 1 | 1 |
-| relationLoadStrategy: `query` | 5 | 5 |
+| Стратегія                     | N=3 | N=6      |
+| ----------------------------- | --- | -------- |
+| наївно (запит у циклі)        | 9   | 15 (≥ N) |
+| relations / leftJoinAndSelect | 1   | 1        |
+| relationLoadStrategy: `query` | 5   | 5        |
 
 `before=15 after=1`. Після фіксу число не росте з N і ≤ `1 + 2 × рівнів` (два рівні: items і product → 5).
 
@@ -368,11 +379,11 @@ Checkout у `src/checkout/checkout.service.ts` — одна `dataSource.transact
 
 Числа з локальних запусків (після `migrate` + `seed`, `SKIP_VAULT=1`):
 
-| Демо | Результат |
-| --- | --- |
-| `demo:race` | спроб 50, успішних 10, фінальний stock 0, відʼємних рядків 0 |
+| Демо           | Результат                                                                          |
+| -------------- | ---------------------------------------------------------------------------------- |
+| `demo:race`    | спроб 50, успішних 10, фінальний stock 0, відʼємних рядків 0                       |
 | `demo:workers` | worker-1: 4, worker-2: 4, оброблено двічі 0, час 817 мс (послідовний мінімум 1600) |
-| `demo:retry` | 1 повтор з кодом `40001`, фінальний `concurrency_probe.value = 2` |
+| `demo:retry`   | 1 повтор з кодом `40001`, фінальний `concurrency_probe.value = 2`                  |
 
 Воркери (`src/jobs/job-queue.service.ts`) беруть рядок через `FOR UPDATE SKIP LOCKED` і тримають транзакцію відкритою на час «обробки»; `status = done` і `processed_count` комітяться разом. CLI-скрипти лежать у `src/demo/`.
 
@@ -399,12 +410,43 @@ bash scripts/with-secrets.sh dev bash scripts/restore-drill.sh
 
 **Чому `pool_mode = transaction`.** PgBouncer віддає серверне зʼєднання клієнту лише на час транзакції, тож `default_pool_size = 8` обслуговує багато клієнтів (`max_client_conn = 200`) без роздування `max_connections` у Postgres. Це ламає сесійний стан: (1) `SET` / `RESET` — наступний запит може піти на інший backend; (2) `LISTEN` — підписка привʼязана до конкретного backend, який пулер забирає після транзакції; (3) сесійний `pg_advisory_lock` — лок лишається на backend, а не на твоєму клієнті (заміна — `pg_advisory_xact_lock`). Protocol-level prepared statements від `pg`/TypeORM тримає `max_prepared_statements = 200` у PgBouncer ≥ 1.21.
 
+## Redis: кеш, сесії, ліміти, черга
+
+Два контейнери, не два `SELECT`. `maxmemory` і `maxmemory-policy` спільні на весь процес Redis, тож кеш (`allkeys-lru`, `maxmemory 64mb`) і черга (`noeviction`, AOF `everysec`) не можуть жити в одному інстансі. BullMQ прямо попереджає, якщо політика не `noeviction`: витіснений ключ черги — це втрачена задача, а не «повільна деградація». Порти `16379` (кеш) і `16380` (черга) навмисно поза діапазоном лекції `22300–22399` і поза дефолтним `6379`, щоб локальний Redis і стек лекції не зайняли той самий bind.
+
+Сесії і лічильник ліміту лежать у **черговому** Redis, не в кеші. `allkeys-lru` має право викинути будь-який ключ; для картки товару це промах і ще один `SELECT`, для сесії — розлогін, який не відтворюється. Третій інстанс не піднімав: `noeviction` вже захищає і чергу, і сесію, і ліміт.
+
+Cache-aside стоїть на читанні картки товару `GET /v1/products/:id` (`CatalogModule`: `ProductsController` → `ProductCardService` → `ProductCardRepository`): один запит збирає рядок `products` і агрегат по `order_items` (середня кількість у рядку замовлення як рейтинг попиту — окремої таблиці відгуків у схемі немає). Промах іде в Postgres і пише ключ з TTL `300 + random(0..60)` секунд. Влучання Redis більше базу не чіпає. Запис у кеш обгорнутий: помилка `SET` не валить саме читання.
+
+Лавина закрита single-flight локом `SET lock:… <token> NX PX`. Хто не взяв лок, чекає і перечитує кеш. Знімає лок тільки власник токена, Lua `GET` + `DEL`, не голий `DEL`.
+
+Сесія — `SessionModule`. `POST /v1/sessions` видає `session_id`. `SessionMiddleware` стоїть на всіх маршрутах: якщо прийшов `X-Session-Id`, він читає сесію через `GETEX … EX`, тож будь-який запит повертає повний TTL (30 хв). `SessionGuard` закриває маршрути, яким сесія обовʼязкова (`GET`/`DELETE /v1/sessions/me`), і віддає `401`, якщо її немає або вона протухла. Після рестарту процесу ключ лишається в Redis.
+
+Ліміт — ковзне вікно одним Lua-скриптом (`ZREMRANGEBYSCORE` + `ZCARD` + `ZADD`). Фіксоване вікно на межі хвилини пропускає до двох лімітів за кількасот мілісекунд; ковзне — ні. Два окремі клієнти ділять один ключ, тож ліміт не множиться на кількість подів. Перевищення — `429` і заголовок `Retry-After`. Ліміт вішається декоратором `@RateLimit({ limit, windowMs })`, а перевіряє його глобальний `RateLimitGuard`: `POST /v1/orders` — 10/хв, `POST /v1/sessions` — 5/хв, `GET /v1/products/:id` — 120/хв. Бакет — маршрут плюс `X-User-Id`, користувач сесії або IP. Якщо Redis недоступний, guard пропускає запит і пише warning: падіння лімітера не має класти API.
+
+Черга `rating-recalc` рахує рейтинг поза HTTP. `attempts: 3`, `backoff: { type: 'exponential', delay: 50, jitter: 0.5 }`. Дедуп — стабільний `jobId`; `removeOnComplete: { age: 3600 }`, не `true`, інакше наступний `add` з тим самим id уже не вважається дублем. Планувальник — `upsertJobScheduler` (у BullMQ 6 `repeat` прибрано): повторний upsert з тим самим id оновлює розклад, а не плодить другий. Після замовлення `OrdersService` ставить задачу на кожен товар (`jobId` = замовлення + товар) і не чекає на неї. `RatingWorker` (окремий процес `npm run start:worker`) перебудовує картку товару в кеші. Раз на 10 хв планувальник прогріває 20 товарів, які замовляють найчастіше. Продюсер відкриває чергу при першому `add` і має обмежений reconnect: якщо Redis лежить, `add` падає за ~0.6 с, а не висить вічно. `demo:queue` ганяє власну чергу `rating-recalc-demo`, щоб запущений воркер не забрав її задачі.
+
+**Що станеться, якщо stampede-лок зламається.** Два запити паралельно прочитають картку з Postgres. Залишок, гроші й замовлення від цього не змінюються: лок не тримає бізнес-інваріант, він лише зрізає зайві читання. Зламаний лок тут коштує ще один похід у базу. Якби від того самого `SET NX` залежало «списати stock рівно один раз», це вже був би зіпсований стан — і там потрібні транзакція, унікальний індекс або fencing token, який перевіряє саме сховище, а не Redis-лок.
+
+Прогін після `docker compose up -d --wait`, `npm run build`, `npm run migrate`, `SKIP_VAULT=1` і URL з блоку Grading нижче:
+
+| Демо             | Вивід                                                                                                          |
+| ---------------- | -------------------------------------------------------------------------------------------------------------- |
+| `demo:cache`     | `cache-lru=1` `cache-maxmemory=1` `warmed=60` `ttl-distinct=36` `concurrent=20` `db-calls=1` `db-calls-warm=0` |
+| `demo:session`   | `requests=3` `sessions=1` `in-redis=1` `ttl-renewed=1`                                                         |
+| `demo:ratelimit` | `instances=2` `limit=5` `requests=8` `allowed=5` `blocked=3` `status=429` `retry-after=1`                      |
+| `demo:queue`     | `queue-noeviction=1` `attempts=3` `completed=1` `added=2` `queued=1` `schedulers=1` `scheduled-runs=2`         |
+
+`ttl-distinct` плаває між прогонами (джитер 0…60 с на 60 ключах). Поріг грейдера — не менше 5; без джитера було б рівно 1.
+
 ## Grading
 
 ```bash
 docker compose up -d --wait
 export DB_HOST=127.0.0.1 DB_PORT=6432 DB_USER=admin DB_PASSWORD=admin-secret DB_NAME=shop
 export BROKER_URL=amqp://app:app@127.0.0.1:5672 # ← схема amqp, порт AMQP (не 15672)
+export REDIS_URL=redis://127.0.0.1:16379        # кеш, порт як у compose (redis-cache)
+export REDIS_QUEUE_URL=redis://127.0.0.1:16380  # черга / сесії / ліміт (redis-queue)
 export SKIP_VAULT=1    # у грейдера немає доступу до сховища
 npm ci && npx tsc --noEmit
 npm run build
@@ -423,6 +465,10 @@ npm run demo:duplicate
 npm run demo:outbox
 npm run demo:crash-write
 npm run demo:crash-relay
+npm run demo:cache
+npm run demo:session
+npm run demo:ratelimit
+npm run demo:queue
 ```
 
 Скрипти `backup.sh` / `restore-drill.sh` читають `DATABASE_URL` з оточення; `with-secrets.sh` при `SKIP_VAULT=1` не ходить у Infisical і просто виконує команду.
@@ -499,7 +545,64 @@ curl -s "$PACT_BROKER_URL/can-i-deploy?pacticipant=marketplace-frontend&version=
 ```
 
 ```json
-{"summary":{"deployable":null,"reason":"There is no verified pact between version 1.0.0 of marketplace-frontend and the latest version of marketplace-api with tag prod (no such version exists)","success":0,"failed":0,"unknown":1},"notices":[{"type":"error","text":"There is no verified pact between version 1.0.0 of marketplace-frontend and the latest version of marketplace-api with tag prod (no such version exists)"}],"matrix":[{"consumer":{"name":"marketplace-frontend","version":{"number":"1.0.0","branch":null,"branches":[],"branchVersions":[],"environments":[],"_links":{"self":{"href":"http://127.0.0.1:9292/pacticipants/marketplace-frontend/versions/1.0.0"}},"tags":[]},"_links":{"self":{"href":"http://127.0.0.1:9292/pacticipants/marketplace-frontend"}}},"provider":{"name":"marketplace-api","version":null,"_links":{"self":{"href":"http://127.0.0.1:9292/pacticipants/marketplace-api"}}},"pact":{"createdAt":"2026-10-01T10:53:10+00:00","_links":{"self":{"href":"http://127.0.0.1:9292/pacts/provider/marketplace-api/consumer/marketplace-frontend/version/1.0.0"}}},"verificationResult":null}]}
+{
+  "summary": {
+    "deployable": null,
+    "reason": "There is no verified pact between version 1.0.0 of marketplace-frontend and the latest version of marketplace-api with tag prod (no such version exists)",
+    "success": 0,
+    "failed": 0,
+    "unknown": 1
+  },
+  "notices": [
+    {
+      "type": "error",
+      "text": "There is no verified pact between version 1.0.0 of marketplace-frontend and the latest version of marketplace-api with tag prod (no such version exists)"
+    }
+  ],
+  "matrix": [
+    {
+      "consumer": {
+        "name": "marketplace-frontend",
+        "version": {
+          "number": "1.0.0",
+          "branch": null,
+          "branches": [],
+          "branchVersions": [],
+          "environments": [],
+          "_links": {
+            "self": {
+              "href": "http://127.0.0.1:9292/pacticipants/marketplace-frontend/versions/1.0.0"
+            }
+          },
+          "tags": []
+        },
+        "_links": {
+          "self": {
+            "href": "http://127.0.0.1:9292/pacticipants/marketplace-frontend"
+          }
+        }
+      },
+      "provider": {
+        "name": "marketplace-api",
+        "version": null,
+        "_links": {
+          "self": {
+            "href": "http://127.0.0.1:9292/pacticipants/marketplace-api"
+          }
+        }
+      },
+      "pact": {
+        "createdAt": "2026-10-01T10:53:10+00:00",
+        "_links": {
+          "self": {
+            "href": "http://127.0.0.1:9292/pacts/provider/marketplace-api/consumer/marketplace-frontend/version/1.0.0"
+          }
+        }
+      },
+      "verificationResult": null
+    }
+  ]
+}
 ```
 
 ```bash
@@ -514,8 +617,118 @@ curl -s "$PACT_BROKER_URL/can-i-deploy?pacticipant=marketplace-frontend&version=
 ```
 
 ```json
-{"summary":{"deployable":true,"reason":"All required verification results are published and successful","success":1,"failed":0,"unknown":0},"notices":[{"type":"success","text":"All required verification results are published and successful"}],"matrix":[{"consumer":{"name":"marketplace-frontend","version":{"number":"1.0.0","branch":null,"branches":[],"branchVersions":[],"environments":[],"_links":{"self":{"href":"http://127.0.0.1:9292/pacticipants/marketplace-frontend/versions/1.0.0"}},"tags":[]},"_links":{"self":{"href":"http://127.0.0.1:9292/pacticipants/marketplace-frontend"}}},"provider":{"name":"marketplace-api","version":{"number":"1.0.0","branch":"prod","branches":[{"name":"prod","latest":true,"_links":{"self":{"title":"Branch version","name":"prod","href":"http://127.0.0.1:9292/pacticipants/marketplace-api/branches/prod/versions/1.0.0"}}}],"branchVersions":[{"name":"prod","latest":true,"_links":{"self":{"title":"Branch version","name":"prod","href":"http://127.0.0.1:9292/pacticipants/marketplace-api/branches/prod/versions/1.0.0"}}}],"environments":[],"_links":{"self":{"href":"http://127.0.0.1:9292/pacticipants/marketplace-api/versions/1.0.0"}},"tags":[{"name":"prod","latest":true,"_links":{"self":{"href":"http://127.0.0.1:9292/pacticipants/marketplace-api/versions/1.0.0/tags/prod"}}}]},"_links":{"self":{"href":"http://127.0.0.1:9292/pacticipants/marketplace-api"}}},"pact":{"createdAt":"2026-10-01T10:53:10+00:00","_links":{"self":{"href":"http://127.0.0.1:9292/pacts/provider/marketplace-api/consumer/marketplace-frontend/version/1.0.0"}}},"verificationResult":{"success":true,"verifiedAt":"2026-10-01T10:55:18+00:00","_links":{"self":{"href":"http://127.0.0.1:9292/pacts/provider/marketplace-api/consumer/marketplace-frontend/pact-version/257f135cb40f33a37a4020801f93ef1ade339c13/metadata/Y3ZuPTEuMC4w/verification-results/102"}}}}]}
+{
+  "summary": {
+    "deployable": true,
+    "reason": "All required verification results are published and successful",
+    "success": 1,
+    "failed": 0,
+    "unknown": 0
+  },
+  "notices": [
+    {
+      "type": "success",
+      "text": "All required verification results are published and successful"
+    }
+  ],
+  "matrix": [
+    {
+      "consumer": {
+        "name": "marketplace-frontend",
+        "version": {
+          "number": "1.0.0",
+          "branch": null,
+          "branches": [],
+          "branchVersions": [],
+          "environments": [],
+          "_links": {
+            "self": {
+              "href": "http://127.0.0.1:9292/pacticipants/marketplace-frontend/versions/1.0.0"
+            }
+          },
+          "tags": []
+        },
+        "_links": {
+          "self": {
+            "href": "http://127.0.0.1:9292/pacticipants/marketplace-frontend"
+          }
+        }
+      },
+      "provider": {
+        "name": "marketplace-api",
+        "version": {
+          "number": "1.0.0",
+          "branch": "prod",
+          "branches": [
+            {
+              "name": "prod",
+              "latest": true,
+              "_links": {
+                "self": {
+                  "title": "Branch version",
+                  "name": "prod",
+                  "href": "http://127.0.0.1:9292/pacticipants/marketplace-api/branches/prod/versions/1.0.0"
+                }
+              }
+            }
+          ],
+          "branchVersions": [
+            {
+              "name": "prod",
+              "latest": true,
+              "_links": {
+                "self": {
+                  "title": "Branch version",
+                  "name": "prod",
+                  "href": "http://127.0.0.1:9292/pacticipants/marketplace-api/branches/prod/versions/1.0.0"
+                }
+              }
+            }
+          ],
+          "environments": [],
+          "_links": {
+            "self": {
+              "href": "http://127.0.0.1:9292/pacticipants/marketplace-api/versions/1.0.0"
+            }
+          },
+          "tags": [
+            {
+              "name": "prod",
+              "latest": true,
+              "_links": {
+                "self": {
+                  "href": "http://127.0.0.1:9292/pacticipants/marketplace-api/versions/1.0.0/tags/prod"
+                }
+              }
+            }
+          ]
+        },
+        "_links": {
+          "self": {
+            "href": "http://127.0.0.1:9292/pacticipants/marketplace-api"
+          }
+        }
+      },
+      "pact": {
+        "createdAt": "2026-10-01T10:53:10+00:00",
+        "_links": {
+          "self": {
+            "href": "http://127.0.0.1:9292/pacts/provider/marketplace-api/consumer/marketplace-frontend/version/1.0.0"
+          }
+        }
+      },
+      "verificationResult": {
+        "success": true,
+        "verifiedAt": "2026-10-01T10:55:18+00:00",
+        "_links": {
+          "self": {
+            "href": "http://127.0.0.1:9292/pacts/provider/marketplace-api/consumer/marketplace-frontend/pact-version/257f135cb40f33a37a4020801f93ef1ade339c13/metadata/Y3ZuPTEuMC4w/verification-results/102"
+          }
+        }
+      }
+    }
+  ]
+}
 ```
 
 Тег `prod` ставиться на версію **провайдера** (`marketplace-api`), і вона має збігатися з `PACT_PROVIDER_VERSION` у Verifier. CI-job `contract` у `.github/workflows/contract.yml`: publish → verify → `can-i-deploy`.
-

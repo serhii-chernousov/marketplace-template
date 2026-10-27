@@ -177,6 +177,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
         '404':
           description: Оголошення з позиції замовлення не знайдено
           content:
@@ -231,8 +233,87 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+  /products/{id}:
+    get:
+      operationId: getProductCard
+      summary: Картка товару з рейтингом і залишком
+      description: Кешується в Redis (cache-aside, TTL з джитером).
+      parameters:
+        - $ref: '#/components/parameters/ProductId'
+      responses:
+        '200':
+          description: Картка товару
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductCard'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          description: Товар не знайдено
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /sessions:
+    post:
+      operationId: createSession
+      summary: Відкрити сесію
+      description: Сесія живе в Redis і подовжується на кожному запиті з X-Session-Id.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSessionRequest'
+      responses:
+        '201':
+          description: Сесію створено
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /sessions/me:
+    get:
+      operationId: getCurrentSession
+      summary: Поточна сесія
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      responses:
+        '200':
+          description: Сесія активна, TTL щойно подовжено
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CurrentSession'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    delete:
+      operationId: deleteCurrentSession
+      summary: Закрити сесію
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      responses:
+        '204':
+          description: Сесію видалено
+        '401':
+          $ref: '#/components/responses/Unauthorized'
 components:
   parameters:
+    SessionId:
+      name: X-Session-Id
+      in: header
+      required: true
+      description: Ідентифікатор сесії з POST /sessions
+      schema:
+        type: string
+        minLength: 1
     Limit:
       name: limit
       in: query
@@ -262,6 +343,13 @@ components:
       required: true
       schema:
         type: string
+    ProductId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: '^[0-9]{1,18}$'
     UserId:
       name: X-User-Id
       in: header
@@ -279,6 +367,24 @@ components:
         type: string
         enum: [buyer, seller]
   responses:
+    Unauthorized:
+      description: Сесії немає або вона протухла
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    TooManyRequests:
+      description: Перевищено ліміт запитів
+      headers:
+        Retry-After:
+          description: Через скільки секунд можна повторити
+          schema:
+            type: integer
+            minimum: 1
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
     BadRequest:
       description: Невалідний запит
       content:
@@ -465,3 +571,53 @@ components:
           type: string
           nullable: true
           description: Непрозорий токен наступної сторінки; null — сторінок більше немає
+    ProductCard:
+      type: object
+      required: [id, name, stock, price_cents, rating, order_lines]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        stock:
+          type: integer
+          minimum: 0
+        price_cents:
+          type: integer
+          minimum: 0
+          description: Ціна в копійках (ціле число)
+        rating:
+          type: number
+          description: Середня кількість одиниць у рядку замовлення
+        order_lines:
+          type: integer
+          minimum: 0
+    CreateSessionRequest:
+      type: object
+      required: [user_id]
+      additionalProperties: false
+      properties:
+        user_id:
+          type: string
+          minLength: 1
+    Session:
+      type: object
+      required: [session_id, expires_in]
+      additionalProperties: false
+      properties:
+        session_id:
+          type: string
+        expires_in:
+          type: integer
+          description: TTL сесії в секундах
+    CurrentSession:
+      type: object
+      required: [user_id, expires_in]
+      additionalProperties: false
+      properties:
+        user_id:
+          type: string
+        expires_in:
+          type: integer
+          description: Скільки секунд лишилось після подовження

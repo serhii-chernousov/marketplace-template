@@ -10,6 +10,7 @@ import {
 	Res,
 } from '@nestjs/common'
 import { Response } from 'express'
+import { RateLimit } from '../ratelimit/rate-limit.decorator'
 import { OrdersService } from './orders.service'
 
 @Controller('v1/orders')
@@ -33,6 +34,7 @@ export class OrdersController {
 
 	@Post()
 	@HttpCode(201)
+	@RateLimit({ limit: 10, windowMs: 60_000 })
 	async create(
 		@Headers('x-user-id') userId: string,
 		@Headers('x-user-role') role: string,
@@ -40,12 +42,7 @@ export class OrdersController {
 		@Body() body: { items: Array<{ listing_id: string; quantity: number }> },
 		@Res({ passthrough: true }) res: Response,
 	) {
-		const result = await this.orders.create(
-			userId,
-			role,
-			idempotencyKey,
-			body,
-		)
+		const result = await this.orders.create(userId, role, idempotencyKey, body)
 		res.setHeader('Location', result.location)
 		if (result.replay) {
 			res.setHeader('Idempotency-Replay', 'true')

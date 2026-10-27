@@ -2,14 +2,13 @@ import { Injectable } from '@nestjs/common'
 import { DataSource, ILike } from 'typeorm'
 import {
 	CheckoutService,
+	IdempotencyKeyConflictError,
 	InsufficientFundsError,
 	OutOfStockError,
 } from '../checkout/checkout.service'
 import { Order as OrderRow } from '../entities/order.entity'
 import { Product } from '../entities/product.entity'
 import { User } from '../entities/user.entity'
-import { createOrderPlacedEvent } from '../messaging/order-placed.event'
-import { publishOrderPlaced } from '../messaging/order-placed.publisher'
 import { ProblemException } from '../types/problem.exception'
 import { Order, StoreService } from '../store/store.service'
 import { OrderEventsService } from './order-events.service'
@@ -86,11 +85,7 @@ export class OrdersService {
 	 * Throws 404/403 if the caller cannot read the order.
 	 * Used by WebSocket join and SSE — same ownership rules as GET /v1/orders/:id.
 	 */
-	async assertCanRead(
-		id: string,
-		userId: string,
-		role: string,
-	): Promise<void> {
+	async assertCanRead(id: string, userId: string, role: string): Promise<void> {
 		await this.loadAuthorizedOrder(id, userId, role)
 	}
 
@@ -118,10 +113,10 @@ export class OrdersService {
 		)
 
 		await this.dataSource.transaction(async (manager) => {
-			await manager.query(
-				`UPDATE orders SET status = $1 WHERE id = $2`,
-				[status, row.id],
-			)
+			await manager.query(`UPDATE orders SET status = $1 WHERE id = $2`, [
+				status,
+				row.id,
+			])
 		})
 
 		this.orderEvents.publish(canonicalId, status)
@@ -196,11 +191,9 @@ export class OrdersService {
 				)
 			}
 
-			const product = await this.dataSource
-				.getRepository(Product)
-				.findOne({
-					where: { name: ILike(listing.title), isActive: true },
-				})
+			const product = await this.dataSource.getRepository(Product).findOne({
+				where: { name: ILike(listing.title), isActive: true },
+			})
 			if (!product) {
 				throw new ProblemException(
 					404,
@@ -239,8 +232,19 @@ export class OrdersService {
 					productId: item.productId,
 					quantity: item.quantity,
 				})),
+				idempotencyKey,
+				requestHash: bodyHash,
 			})
 		} catch (err: unknown) {
+			if (err instanceof IdempotencyKeyConflictError) {
+				throw new ProblemException(
+					422,
+					'https://marketplace.local/problems/idempotency-key-conflict',
+					'Idempotency key conflict',
+					'Same Idempotency-Key was reused with a different request body',
+					'/v1/orders',
+				)
+			}
 			if (err instanceof OutOfStockError) {
 				throw new ProblemException(
 					409,
@@ -262,16 +266,22 @@ export class OrdersService {
 			throw err
 		}
 
-		// Order is already committed; broker publish is a separate commit.
-		// Gap (order without event) closes in HW #22 via transactional outbox.
-		await publishOrderPlaced(
-			createOrderPlacedEvent({
-				orderId: `order-${result.orderId}`,
-				userId: buyer.id,
-				totalCents: result.totalCents,
-			}),
-		)
+		if (result.replay) {
+			const { order } = await this.loadAuthorizedOrder(
+				`order-${result.orderId}`,
+				userId,
+				role,
+			)
+			const location = `/v1/orders/${order.id}`
+			this.store.idempotencyStore.set(cacheKey, {
+				bodyHash,
+				location,
+				body: order,
+			})
+			return { order, location, replay: true }
+		}
 
+		// Order and outbox row committed together. Relay publishes later.
 		for (const item of resolved) {
 			const listing = this.store.listings.get(item.listing_id)
 			if (listing) {

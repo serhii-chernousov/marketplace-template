@@ -7,6 +7,7 @@ import { TYPEORM_ENTITIES } from '../../../src/database/typeorm-entities'
 import { InitSchema1790007847172 } from '../../../src/migrations/1790007847172-InitSchema'
 import { AddProductsNameUniq1790180000000 } from '../../../src/migrations/1790180000000-AddProductsNameUniq'
 import { AddBalanceAndJobQueue1790200000000 } from '../../../src/migrations/1790200000000-AddBalanceAndJobQueue'
+import { AddOutboxAndInbox1790400000000 } from '../../../src/migrations/1790400000000-AddOutboxAndInbox'
 
 let container: StartedPostgreSqlContainer | undefined
 let dataSource: DataSource | undefined
@@ -42,6 +43,7 @@ export async function startTestDatabase(): Promise<DataSource> {
 			InitSchema1790007847172,
 			AddProductsNameUniq1790180000000,
 			AddBalanceAndJobQueue1790200000000,
+			AddOutboxAndInbox1790400000000,
 		],
 	})
 	await dataSource.initialize()
@@ -53,6 +55,9 @@ export async function startTestDatabase(): Promise<DataSource> {
 export async function truncateAll(ds: DataSource): Promise<void> {
 	await ds.query(`
 		TRUNCATE TABLE
+			idempotency_keys,
+			outbox,
+			processed_messages,
 			order_items,
 			orders,
 			jobs,
@@ -62,9 +67,7 @@ export async function truncateAll(ds: DataSource): Promise<void> {
 			concurrency_probe
 		RESTART IDENTITY CASCADE
 	`)
-	await ds.query(
-		`INSERT INTO concurrency_probe (id, value) VALUES (1, 0)`,
-	)
+	await ds.query(`INSERT INTO concurrency_probe (id, value) VALUES (1, 0)`)
 }
 
 /** Destroys DataSource and stops the container for this test file. */

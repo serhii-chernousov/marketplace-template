@@ -17,12 +17,15 @@ export interface EffectCounts {
  * INSERT … ON CONFLICT DO NOTHING by event_id — survives restarts and replicas.
  */
 export class EffectStore {
+	private successfulApplies = 0
+
 	constructor(private readonly dataSource: DataSource) {}
 
 	async reset(): Promise<void> {
 		await this.dataSource.query(
 			`TRUNCATE order_placed_deliveries, order_placed_effects, processed_messages`,
 		)
+		this.successfulApplies = 0
 	}
 
 	async recordDelivery(eventId: string): Promise<void> {
@@ -43,7 +46,7 @@ export class EffectStore {
 	 * false when event_id already existed (duplicate delivery).
 	 */
 	async applyEffect(event: OrderPlacedEvent): Promise<boolean> {
-		return this.dataSource.transaction(async (manager) => {
+		const applied = await this.dataSource.transaction(async (manager) => {
 			await manager.query(
 				`
 				INSERT INTO processed_messages (message_id, consumer)
@@ -65,6 +68,19 @@ export class EffectStore {
 			)
 			return rows.length > 0
 		})
+		if (applied) {
+			this.successfulApplies += 1
+		}
+		return applied
+	}
+
+	/**
+	 * How many applyEffect calls returned true.
+	 * Not the effect-table row count: a duplicate delivery leaves the table
+	 * unchanged and does not increment this.
+	 */
+	appliedCount(): number {
+		return this.successfulApplies
 	}
 
 	async markAcked(eventId: string): Promise<void> {

@@ -104,6 +104,7 @@ export async function prepareOutboxDemo(): Promise<OutboxDemoWorld> {
 	)
 
 	const productId = String(productRows[0].id)
+	const store = new EffectStore(ds)
 	const counts = async (): Promise<OutboxDemoCounts> => {
 		const orders = await scalar(
 			ds,
@@ -143,7 +144,7 @@ export async function prepareOutboxDemo(): Promise<OutboxDemoWorld> {
 			deliveries,
 			effect,
 			processed,
-			applied: effect,
+			applied: store.appliedCount(),
 		}
 	}
 
@@ -151,7 +152,7 @@ export async function prepareOutboxDemo(): Promise<OutboxDemoWorld> {
 		ds,
 		checkout: new CheckoutService(ds),
 		relay: new OutboxRelay(ds),
-		store: new EffectStore(ds),
+		store,
 		userId,
 		productId,
 		counts,

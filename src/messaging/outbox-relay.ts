@@ -1,7 +1,10 @@
 import { DataSource } from 'typeorm'
 import { asRows } from '../common/pg-rows'
 import { OrderPlacedEvent } from './order-placed.event'
-import { publishOrderPlaced } from './order-placed.publisher'
+import {
+	publishOrderPlaced,
+	withOrderPlacedChannel,
+} from './order-placed.publisher'
 
 /**
  * Relay died after the broker accepted the publish and before
@@ -54,41 +57,69 @@ export class OutboxRelay {
 	 */
 	async publishPending(options: RelayOptions = {}): Promise<number> {
 		const limit = options.limit ?? 20
-		return this.dataSource.transaction(async (manager) => {
-			const rows = asRows<{ id: string; payload: unknown }>(
-				await manager.query(
-					`
-					SELECT id, payload
-					FROM outbox
-					WHERE published_at IS NULL
-						AND ($2::text IS NULL OR payload->>'userId' = $2)
-					ORDER BY created_at, id
-					FOR UPDATE SKIP LOCKED
-					LIMIT $1
-					`,
-					[limit, options.userId ?? null],
-				),
-			)
-
-			let published = 0
-			for (const row of rows) {
-				const event = asOrderPlacedEvent(row.payload)
-				await publishOrderPlaced(event)
-				published += 1
-				if (options.crashAfterPublish) {
-					throw new RelayCrashedError()
+		let failedAttemptId: string | null = null
+		try {
+			return await this.dataSource.transaction(async (manager) => {
+				const rows = asRows<{ id: string; payload: unknown }>(
+					await manager.query(
+						`
+						SELECT id, payload
+						FROM outbox
+						WHERE published_at IS NULL
+							AND ($2::text IS NULL OR payload->>'userId' = $2)
+						ORDER BY created_at, id
+						FOR UPDATE SKIP LOCKED
+						LIMIT $1
+						`,
+						[limit, options.userId ?? null],
+					),
+				)
+				if (rows.length === 0) {
+					return 0
 				}
-				await manager.query(
+
+				return withOrderPlacedChannel(async (channel) => {
+					let published = 0
+					for (const row of rows) {
+						const event = asOrderPlacedEvent(row.payload)
+						try {
+							await publishOrderPlaced(event, channel)
+						} catch (err) {
+							failedAttemptId = row.id
+							throw err
+						}
+						published += 1
+						if (options.crashAfterPublish) {
+							throw new RelayCrashedError()
+						}
+						await manager.query(
+							`
+							UPDATE outbox
+							SET published_at = now(),
+								attempts = attempts + 1
+							WHERE id = $1
+							`,
+							[row.id],
+						)
+					}
+					return published
+				})
+			})
+		} catch (err) {
+			if (failedAttemptId !== null) {
+				// The claim transaction rolls back with the failed publish,
+				// so this increment has to commit on its own. Otherwise
+				// attempts stays 0 and backoff has nothing to read.
+				await this.dataSource.query(
 					`
 					UPDATE outbox
-					SET published_at = now(),
-						attempts = attempts + 1
+					SET attempts = attempts + 1
 					WHERE id = $1
 					`,
-					[row.id],
+					[failedAttemptId],
 				)
 			}
-			return published
-		})
+			throw err
+		}
 	}
 }

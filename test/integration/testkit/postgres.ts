@@ -23,6 +23,9 @@ export function applyTestDatabaseEnv(uri: string): void {
 	process.env.DB_NAME = parsed.pathname.replace(/^\//, '')
 	process.env.DB_URL = uri
 	process.env.PORT = process.env.PORT || '3000'
+	process.env.REDIS_URL = process.env.REDIS_URL || 'redis://127.0.0.1:16379'
+	process.env.REDIS_QUEUE_URL =
+		process.env.REDIS_QUEUE_URL || 'redis://127.0.0.1:16380'
 }
 
 /** Starts postgres:16-alpine for this Jest test file and runs migrations. */

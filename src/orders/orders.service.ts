@@ -8,6 +8,7 @@ import {
 } from '../checkout/checkout.service'
 import { Order as OrderRow } from '../entities/order.entity'
 import { Product } from '../entities/product.entity'
+import { RatingQueueService } from '../queue/rating-queue.service'
 import { User } from '../entities/user.entity'
 import { ProblemException } from '../types/problem.exception'
 import { Order, StoreService } from '../store/store.service'
@@ -54,6 +55,7 @@ export class OrdersService {
 		private readonly checkout: CheckoutService,
 		private readonly dataSource: DataSource,
 		private readonly orderEvents: OrderEventsService,
+		private readonly ratings: RatingQueueService,
 	) {}
 
 	list(userId: string, role: string, limit?: number, cursor?: string) {
@@ -304,6 +306,10 @@ export class OrdersService {
 			status: 'paid',
 		}
 		this.store.orders.set(id, order)
+		this.ratings.enqueueRecalcInBackground(
+			result.orderId,
+			resolved.map((item) => item.productId),
+		)
 
 		const location = `/v1/orders/${id}`
 		this.store.idempotencyStore.set(cacheKey, {

@@ -57,7 +57,7 @@ async function main(): Promise<void> {
 		}
 
 		const metrics = {
-			'cache-lru': policy === 'noeviction' ? 0 : 1,
+			'cache-lru': policy === 'allkeys-lru' ? 1 : 0,
 			'cache-maxmemory': maxmemory > 0 ? 1 : 0,
 			warmed: ids.length,
 			'ttl-distinct': ttls.size,

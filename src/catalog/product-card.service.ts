@@ -12,7 +12,11 @@ const CACHE_TTL_BASE_SEC = 300
 const CACHE_TTL_JITTER_SEC = 60
 const LOCK_TTL_MS = 5000
 const WAIT_POLL_MS = 20
-const WAIT_POLLS = 100
+/**
+ * Cover the whole lock. A SELECT that returns while the lock is still
+ * held writes the card; a shorter budget throws before that write.
+ */
+const WAIT_POLLS = Math.ceil(LOCK_TTL_MS / WAIT_POLL_MS)
 
 const UNLOCK_LUA = `
 if redis.call("get", KEYS[1]) == ARGV[1] then

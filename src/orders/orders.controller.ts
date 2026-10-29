@@ -10,6 +10,8 @@ import {
 	Res,
 } from '@nestjs/common'
 import { Response } from 'express'
+import type { AuthUser } from '../auth/auth-user'
+import { CurrentUser, Roles } from '../auth/decorators'
 import { RateLimit } from '../ratelimit/rate-limit.decorator'
 import { OrdersService } from './orders.service'
 
@@ -19,30 +21,24 @@ export class OrdersController {
 
 	@Get()
 	list(
-		@Headers('x-user-id') userId: string,
-		@Headers('x-user-role') role: string,
+		@CurrentUser() user: AuthUser,
 		@Query('limit') limit?: string,
 		@Query('cursor') cursor?: string,
 	) {
-		return this.orders.list(
-			userId,
-			role,
-			limit ? Number(limit) : undefined,
-			cursor,
-		)
+		return this.orders.list(user, limit ? Number(limit) : undefined, cursor)
 	}
 
 	@Post()
 	@HttpCode(201)
+	@Roles('buyer')
 	@RateLimit({ limit: 10, windowMs: 60_000 })
 	async create(
-		@Headers('x-user-id') userId: string,
-		@Headers('x-user-role') role: string,
+		@CurrentUser() user: AuthUser,
 		@Headers('idempotency-key') idempotencyKey: string,
 		@Body() body: { items: Array<{ listing_id: string; quantity: number }> },
 		@Res({ passthrough: true }) res: Response,
 	) {
-		const result = await this.orders.create(userId, role, idempotencyKey, body)
+		const result = await this.orders.create(user, idempotencyKey, body)
 		res.setHeader('Location', result.location)
 		if (result.replay) {
 			res.setHeader('Idempotency-Replay', 'true')
@@ -51,11 +47,7 @@ export class OrdersController {
 	}
 
 	@Get(':id')
-	getById(
-		@Param('id') id: string,
-		@Headers('x-user-id') userId: string,
-		@Headers('x-user-role') role: string,
-	) {
-		return this.orders.getById(id, userId, role)
+	getById(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+		return this.orders.getById(id, user)
 	}
 }

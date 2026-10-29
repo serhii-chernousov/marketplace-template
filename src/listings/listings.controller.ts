@@ -2,7 +2,6 @@ import {
 	Body,
 	Controller,
 	Get,
-	Headers,
 	HttpCode,
 	Param,
 	Patch,
@@ -11,13 +10,22 @@ import {
 	Res,
 } from '@nestjs/common'
 import { Response } from 'express'
+import { DataSource } from 'typeorm'
+import type { AuthUser } from '../auth/auth-user'
+import { CurrentUser, Public, Roles } from '../auth/decorators'
+import { forbidden } from '../auth/problems'
+import { publicUserIdOf } from '../common/public-user-id'
 import { ProblemException } from '../types/problem.exception'
 import { StoreService } from '../store/store.service'
 
 @Controller('v1/listings')
 export class ListingsController {
-	constructor(private readonly store: StoreService) {}
+	constructor(
+		private readonly store: StoreService,
+		private readonly dataSource: DataSource,
+	) {}
 
+	@Public()
 	@Get()
 	list(@Query('limit') limit?: string, @Query('cursor') cursor?: string) {
 		const active = [...this.store.listings.values()]
@@ -30,6 +38,7 @@ export class ListingsController {
 		)
 	}
 
+	@Public()
 	@Get(':id')
 	getById(@Param('id') id: string) {
 		const listing = this.store.listings.get(id)
@@ -47,22 +56,13 @@ export class ListingsController {
 
 	@Post()
 	@HttpCode(201)
-	create(
-		@Headers('x-user-id') userId: string,
-		@Headers('x-user-role') role: string,
+	@Roles('seller')
+	async create(
+		@CurrentUser() user: AuthUser,
 		@Body() body: { title: string; price_cents: number; quantity: number },
 		@Res({ passthrough: true }) res: Response,
 	) {
-		if (role !== 'seller') {
-			throw new ProblemException(
-				403,
-				'https://marketplace.local/problems/forbidden',
-				'Forbidden',
-				'Only sellers can create listings',
-				'/v1/listings',
-			)
-		}
-
+		const sellerId = await publicUserIdOf(this.dataSource, user.id)
 		const id = this.store.newListingId()
 		const listing = {
 			id,
@@ -70,7 +70,7 @@ export class ListingsController {
 			price_cents: body.price_cents,
 			quantity: body.quantity,
 			status: 'active' as const,
-			seller_id: userId,
+			seller_id: sellerId,
 		}
 		this.store.listings.set(id, listing)
 		res.setHeader('Location', `/v1/listings/${id}`)
@@ -78,10 +78,10 @@ export class ListingsController {
 	}
 
 	@Patch(':id')
-	update(
+	@Roles('seller')
+	async update(
 		@Param('id') id: string,
-		@Headers('x-user-id') userId: string,
-		@Headers('x-user-role') role: string,
+		@CurrentUser() user: AuthUser,
 		@Body()
 		body: Partial<{
 			title: string
@@ -101,11 +101,10 @@ export class ListingsController {
 			)
 		}
 
-		if (role !== 'seller' || listing.seller_id !== userId) {
-			throw new ProblemException(
-				403,
-				'https://marketplace.local/problems/forbidden',
-				'Forbidden',
+		if (
+			listing.seller_id !== (await publicUserIdOf(this.dataSource, user.id))
+		) {
+			throw forbidden(
 				'Only the listing owner can update it',
 				`/v1/listings/${id}`,
 			)

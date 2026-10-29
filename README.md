@@ -1,19 +1,22 @@
-# Marketplace API (hw-23)
+# Marketplace API (hw-24)
 
 ## Ресурси
 
+- `POST /v1/auth/login`, `POST /v1/auth/refresh`, `POST /v1/auth/logout`, `GET /v1/auth/me` — JWT-автентифікація (див. [Auth](#auth))
 - `GET/POST /v1/listings`, `GET/PATCH /v1/listings/{id}`
+- `GET /v1/products/{id}`, `POST /v1/products` — картка товару (публічна) і запис у каталог (seller/admin)
 - `GET/POST /v1/orders`, `GET /v1/orders/{id}` — create йде в Postgres через `CheckoutService`, get за id читає рядок `orders`
 - `PATCH /orders/{id}/status` — зміна статусу (поза OpenAPI `/v1`); після commit емітить подію в спільну шину
 - `GET /orders/{id}/events` — SSE-потік `order.status` з `id:` і підтримкою `Last-Event-ID`
 - WebSocket (socket.io) — `join` у кімнату `orders:<id>` після перевірки власника; подія `order.status` лише в цю кімнату
 
-Гроші — цілі копійки в API (`price_cents`, `total_cents`) і в SQL (`products.price_cents`, `orders.total_cents`, `order_items.unit_price_cents`). Ідентифікація користувача — тимчасові заголовки `X-User-Id` і `X-User-Role` (`buyer` | `seller`). Для DB-checkout: `buyer-1`…`buyer-5` (або email / numeric id з сіду).
+Гроші — цілі копійки в API (`price_cents`, `total_cents`) і в SQL (`products.price_cents`, `orders.total_cents`, `order_items.unit_price_cents`). Ідентифікація користувача — лише `Authorization: Bearer <access-токен>`; заголовки `X-User-Id` / `X-User-Role` більше нічого не значать. Без токена відкриті тільки вхід, refresh, перегляд оголошень і карток товарів, `/health`, `/db`. У відповідях сідові акаунти мають короткі id (`buyer-1`, `seller-1`), решта — email.
 
 ## Структура `src/`
 
 | Каталог                           | Призначення                                                   |
 | --------------------------------- | ------------------------------------------------------------- |
+| `auth/`                           | JWT ES256, ротація refresh з детекцією повтору, денилист, гарди `JwtAuthGuard` / `RolesGuard` |
 | `checkout/`                       | `CheckoutService` — транзакційний checkout і запис у outbox  |
 | `orders/`, `listings/`, `health/` | Nest feature-модулі (controller + service + gateway)          |
 | `jobs/`                           | черга `FOR UPDATE SKIP LOCKED`                                |
@@ -420,9 +423,9 @@ Cache-aside стоїть на читанні картки товару `GET /v1/
 
 Лавина закрита single-flight локом `SET lock:… <token> NX PX`. Хто не взяв лок, чекає і перечитує кеш. Знімає лок тільки власник токена, Lua `GET` + `DEL`, не голий `DEL`.
 
-Сесія — `SessionModule`. `POST /v1/sessions` видає `session_id`. `SessionMiddleware` стоїть на всіх маршрутах: якщо прийшов `X-Session-Id`, він читає сесію через `GETEX … EX`, тож будь-який запит повертає повний TTL (30 хв). `SessionGuard` закриває маршрути, яким сесія обовʼязкова (`GET`/`DELETE /v1/sessions/me`), і віддає `401`, якщо її немає або вона протухла. Після рестарту процесу ключ лишається в Redis.
+Сесія — `SessionModule`. `POST /v1/sessions` (потрібен access-токен, сесія відкривається на його власника) видає `session_id`. `SessionMiddleware` стоїть на всіх маршрутах: якщо прийшов `X-Session-Id`, він читає сесію через `GETEX … EX`, тож будь-який запит повертає повний TTL (30 хв). `SessionGuard` закриває маршрути, яким сесія обовʼязкова (`GET`/`DELETE /v1/sessions/me`), і віддає `401`, якщо її немає або вона протухла. Після рестарту процесу ключ лишається в Redis.
 
-Ліміт — ковзне вікно одним Lua-скриптом (`ZREMRANGEBYSCORE` + `ZCARD` + `ZADD`). Фіксоване вікно на межі хвилини пропускає до двох лімітів за кількасот мілісекунд; ковзне — ні. Два окремі клієнти ділять один ключ, тож ліміт не множиться на кількість подів. Перевищення — `429` і заголовок `Retry-After`. Ліміт вішається декоратором `@RateLimit({ limit, windowMs })`, а перевіряє його глобальний `RateLimitGuard`: `POST /v1/orders` — 10/хв, `POST /v1/sessions` — 5/хв, `GET /v1/products/:id` — 120/хв. Бакет — маршрут плюс `X-User-Id`, користувач сесії або IP. Якщо Redis недоступний, guard пропускає запит і пише warning: падіння лімітера не має класти API.
+Ліміт — ковзне вікно одним Lua-скриптом (`ZREMRANGEBYSCORE` + `ZCARD` + `ZADD`). Фіксоване вікно на межі хвилини пропускає до двох лімітів за кількасот мілісекунд; ковзне — ні. Два окремі клієнти ділять один ключ, тож ліміт не множиться на кількість подів. Перевищення — `429` і заголовок `Retry-After`. Ліміт вішається декоратором `@RateLimit({ limit, windowMs })`, а перевіряє його глобальний `RateLimitGuard`: `POST /v1/orders` — 10/хв, `POST /v1/sessions` — 5/хв, `GET /v1/products/:id` — 120/хв. Бакет — маршрут плюс користувач з access-токена, користувач сесії або IP. Якщо Redis недоступний, guard пропускає запит і пише warning: падіння лімітера не має класти API.
 
 Черга `rating-recalc` рахує рейтинг поза HTTP. `attempts: 3`, `backoff: { type: 'exponential', delay: 50, jitter: 0.5 }`. Дедуп — стабільний `jobId`; `removeOnComplete: { age: 3600 }`, не `true`, інакше наступний `add` з тим самим id уже не вважається дублем. Планувальник — `upsertJobScheduler` (у BullMQ 6 `repeat` прибрано): повторний upsert з тим самим id оновлює розклад, а не плодить другий. Після замовлення `OrdersService` ставить задачу на кожен товар (`jobId` = замовлення + товар) і не чекає на неї. `RatingWorker` (окремий процес `npm run start:worker`) перебудовує картку товару в кеші. Раз на 10 хв планувальник прогріває 20 товарів, які замовляють найчастіше. Продюсер відкриває чергу при першому `add` і має обмежений reconnect: якщо Redis лежить, `add` падає за ~0.6 с, а не висить вічно. `demo:queue` ганяє власну чергу `rating-recalc-demo`, щоб запущений воркер не забрав її задачі.
 
@@ -439,15 +442,117 @@ Cache-aside стоїть на читанні картки товару `GET /v1/
 
 `ttl-distinct` плаває між прогонами (джитер 0…60 с на 60 ключах). Поріг грейдера — не менше 5; без джитера було б рівно 1.
 
+## Auth
+
+**Домен.** «Ресурс із власником» — замовлення (`orders.user_id`): `GET /v1/orders/{id}` бачить покупець цього замовлення, продавець його товару й admin. «Ресурс, у який пише лише привілейована роль» — каталог товарів: `POST /v1/products` дозволений `seller` і `admin`, покупець отримує `403`.
+
+### Змінні
+
+| Змінна                 | Джерело                                    | Навіщо                                                                        |
+| ---------------------- | ------------------------------------------ | ----------------------------------------------------------------------------- |
+| `JWT_PRIVATE_KEY`      | сховище (#11), Infisical `dev` / `prod`    | підпис access-токенів: base64 від PKCS#8 PEM, EC P-256                        |
+| `JWT_PUBLIC_KEY`       | сховище (#11), Infisical `dev` / `prod`    | перевірка підпису: base64 від SPKI PEM тієї ж пари                            |
+| `JWT_KID`              | сховище (#11), Infisical `dev` / `prod`    | `kid` у заголовку токена; міняється з кожною ротацією ключа                   |
+| `REFRESH_TOKEN_PEPPER` | сховище (#11), Infisical `dev` / `prod`    | ключ HMAC для `refresh_tokens.token_hash`, ≥ 32 символи                       |
+| `DB_HOST` … `DB_NAME`  | compose / оточення                         | дев-креденшели Postgres                                                       |
+| `REDIS_QUEUE_URL`      | compose / оточення                         | noeviction-Redis: денилист, сесії, ліміт                                      |
+
+Жодна з чотирьох змінних сховища не має дефолту в Zod-схемі: дефолт для ключа — це ключ, закомічений у git. Ціна витоку тут інша, ніж у `DB_URL`: рядок підключення дає доступ до бази з мережі, а ключ підпису дає змогу виписати собі токен будь-кого, не маючи жодного доступу. Конфіг валідується в `ConfigModule.forRoot` — до `DataSource.initialize()`, тому голий `npm run start` без ключів падає з `exit 1` і називає змінні (`JWT_PRIVATE_KEY: Invalid input…`), а не `ECONNREFUSED`. Схема також перевіряє, що ключі розбираються, що це P-256 і що публічний ключ — пара приватному. `npm run start:vault` і всі `demo:*` йдуть через `bash scripts/with-secrets.sh dev …`. Воркер черги (`start:worker`) валідує лише базову схему: ключа підпису він не тримає.
+
+Пара для оточення генерується локально і йде одразу в сховище, повз файли репозиторію:
+
+```bash
+node scripts/jwt-keygen.mjs dev-2026-10    # три рядки KEY=value → Infisical env dev
+node scripts/jwt-keygen.mjs prod-2026-10   # → Infisical env prod
+bash scripts/with-secrets.sh dev node scripts/jwt-keygen.mjs --fingerprint
+bash scripts/with-secrets.sh prod node scripts/jwt-keygen.mjs --fingerprint
+```
+
+Відбиток — SHA-256 від SPKI DER публічного ключа; той самий рядок застосунок пише в лог при старті (`ES256 signing key kid=… fingerprint=…`). Ні токени, ні їхні хвости в лог не йдуть — лише `kid`, відбиток, `family_id`, `user_id`.
+
+| Оточення | `kid`          | Відбиток публічного ключа |
+| -------- | -------------- | ------------------------- |
+| dev      | `dev-2026-10`  | `SHA256:…` _(вписати вивід `--fingerprint` для dev)_  |
+| prod     | `prod-2026-10` | `SHA256:…` _(вписати вивід `--fingerprint` для prod)_ |
+
+### Токени
+
+- **access** — JWT ES256, 10 хв. Claims: `sub` (id користувача), `role`, `sid` (= `family_id`), `jti`, `iss`, `aud`, `exp`; у заголовку `kid`.
+- **refresh** — 32 випадкові байти (base64url), не JWT, 14 днів. У БД лежить не сам токен, а `HMAC-SHA256(REFRESH_TOKEN_PEPPER, token)`: дамп таблиці `refresh_tokens` — не дамп чинних сесій, навіть разом з усією базою, поки «перець» лежить у сховищі.
+
+**Чому ES256.** OWASP JWT Cheat Sheet позначає RS256 (RSASSA-PKCS1-v1_5) як «Not recommended» і радить ES256 / PS256 / EdDSA. ES256: короткий ключ P-256 і підпис 64 байти, швидкий підпис; EdDSA `jsonwebtoken` (під `@nestjs/jwt`) не вміє. `@nestjs/jwt` зафіксовано на 11.x: 12.x — ESM-only, а jest-сьюти проєкту працюють у CJS.
+
+**Allowlist алгоритмів.** `verifyOptions: { algorithms: ['ES256'], issuer, audience }` у `src/auth/auth.module.ts` — єдиний надійний запобіжник від algorithm confusion (RFC 8725 §3.1): токен з `alg: HS256` чи `none` відкидається до будь-якої криптографії, а `jsonwebtoken` додатково перевіряє, що ключ саме EC P-256. Токен з чужим `kid` — теж `401`. Доказ, що підпис справді перевіряється, а не декодується, — `tampered=401` у `demo:rbac`.
+
+**Overlap-ротація ключа і роль `kid`.** `kid` каже верифікатору, яким ключем перевіряти, без перебору всіх. Ротація без даунтайму йде в три кроки: (1) нова пара з новим `kid` додається верифікаторам як другий публічний ключ — приймаються обидва `kid`; (2) підпис перемикається на новий приватний ключ; (3) щонайменше через TTL access-токена (10 хв) жодного токена зі старим `kid` уже не лишилось — старий публічний ключ прибирається. Зараз у коді «звʼязка» з одного ключа: токен з будь-яким іншим `kid` отримує `401`; на крок 1 додається друга пара змінних у сховищі. Refresh-токени ротація ключа підпису не зачіпає — вони непрозорі. Ротація «перцю» робить усі refresh-хеші непридатними, тобто розлогінює всіх.
+
+### Ротація refresh і детекція повтору
+
+Кожен успішний `POST /v1/auth/refresh` гасить предʼявлений токен (`used_at`) і видає нову пару тієї ж сімʼї (`family_id`, один логін — одна сімʼя). Усе це одна транзакція з `SELECT … FOR UPDATE` по `token_hash` (`RefreshTokenService.rotate`), тож два паралельні рефреші того самого токена серіалізуються.
+
+Прийшов токен, у якого вже стоїть `used_at`, — це сигнал компрометації: або злодій, або чесний клієнт предʼявляє вже витрачений токен, і сервер не знає, хто з них хто. Тому відкликається **вся сімʼя** (`revoked_at`), пишеться рядок `refresh token reuse detected: family_id=… user_id=…, family revoked`, а в денилист іде `deny:sid:<family_id>`, щоб і вже видані access-токени цієї сімʼї померли одразу, а не через 10 хв. Відкликання комітиться до того, як запит отримає `401` (кидок усередині транзакції відкотив би його). Ротація без сімʼї нічого не дає: злодій рефрешиться першим, чесний клієнт мовчки перелогінюється, а сесія злодія живе далі. RFC 9700 §4.14.2 вимагає або sender-constrained refresh-токен, або ротацію з детекцією повтору — і в другому випадку звʼязок між старим і новим токеном (`family_id`) зберігається саме для того, щоб виявлений повтор було чим відкликати.
+
+**Гонка на клієнті.** Вікна благодаті немає: повторне предʼявлення того самого refresh — завжди компрометація. Тому клієнт серіалізує рефреш — один спільний проміс на всі паралельні запити, які отримали `401`; решта чекають на нього, а не йдуть рефрешити самі.
+
+### Чому логаут — це дві дії
+
+Refresh-токен — рядок у базі: щоб убити його, досить `revoked_at` на всю сімʼю. Access-токен self-contained: сервер перевіряє лише підпис і `exp`, тож без денилиста він живе до `exp`, хоч би що сталося з сімʼєю. `POST /v1/auth/logout` робить обидва: (1) `UPDATE refresh_tokens SET revoked_at = now() WHERE family_id = :sid` у Postgres; (2) `SET deny:jti:<jti> EX <залишок життя>` і `SET deny:sid:<sid> EX 600` у noeviction-Redis. Ключі денилиста зникають самі: TTL дорівнює залишку життя токена і ні секундою більше. `JwtAuthGuard` перевіряє обидва ключі одним `EXISTS`; якщо Redis недоступний — `503`, а не `401` (fail closed, але без петлі рефрешу).
+
+Це два сховища, тобто dual write (як у ДЗ #22), і атомарним він не є. Порядок вибрано під повтор: спершу Postgres, потім Redis; обидва записи ідемпотентні, а `204` повертається лише після обох. Якщо впав Redis, клієнт отримує помилку і повторює логаут — і повтор проходить гард, бо саме денилист не записався. Вікно між кроками — refresh уже мертвий, access ще живий — закривається повтором або `exp` (≤ 10 хв).
+
+### 401 проти 403
+
+| Ситуація                                               | Код   | Хто вирішує                               |
+| ------------------------------------------------------ | ----- | ----------------------------------------- |
+| немає токена, зіпсований підпис, протух, чужий `kid`, у денилисті | `401` | `JwtAuthGuard` (глобальний, `@Public()` — виняток) |
+| токен валідний, роль не та                             | `403` | `RolesGuard` + `@Roles(...)`              |
+| токен валідний, ресурс чужий                           | `403` | `OrdersService` після завантаження        |
+
+Клієнтський SDK на `401` іде рефрешити, на `403` показує помилку, тому їх не можна плутати. Обидва гарди зареєстровані як `APP_GUARD` в `AppModule` — нові маршрути закриті, доки їх явно не позначено `@Public()`.
+
+**Де межа власності.** Власність навмисно не гард: гард стоїть до того, як ресурс завантажено, і щоб дізнатися власника, мусив би сам піти в базу. Перевірка живе в `OrdersService.loadAuthorizedOrder`: замовлення читається одним запитом разом із покупцем і продавцем товару, і тільки тоді `caller.id` порівнюється з `orders.user_id` (покупець) або `products.seller_id` (продавець); admin бачить усе. Невідомий id — `404`, чужий — `403`. Фільтр `WHERE user_id = :caller` прямо в запиті теж коректний, але чуже замовлення тоді виглядало б як `404`.
+
+**Роль у токені — кеш, а не джерело правди.** Свіжо-розжалуваний адмін лишається адміном до `exp` свого access-токена — до 10 хвилин. Наступний `refresh` перечитує користувача з бази й видає токен уже з новою роллю; деактивований користувач (`is_active = false`) на refresh отримує `401`, а його сімʼя відкликається. Якщо 10 хвилин — забагато, сімʼю можна прибити примусово (той самий `deny:sid`). Ресурсні перевірки (власність, «активний покупець» у `POST /v1/orders`) і так дивляться в базу, а не в claim.
+
+**Відомі межі.** WebSocket перевіряє токен один раз, у socket.io-middleware на рукостисканні (`handshake.auth.token`): зʼєднання, відкрите до логауту, живе далі. SSE `GET /orders/{id}/events` вимагає `Authorization`, якого нативний `EventSource` не шле — потрібен fetch-клієнт. Redis-сесія з `POST /v1/sessions` переживає JWT-логаут. На `POST /v1/auth/login` ще немає ліміту спроб.
+
+### Демо
+
+Кожне демо саме піднімає застосунок у своєму процесі на своєму порту (`demo:auth` — 3401, `demo:reuse` — 3402, `demo:rbac` — 3403), тож сирітський сервер, який тримав би порт після вбитого по таймауту запуску, неможливий. Стан приводиться до чистого: демо створює власних користувачів (`demo-*@shop.local`) зі свіжим випадковим паролем і чистить лише їхні замовлення, товари й refresh-токени. Інваріант перевіряється в самому скрипті: будь-яке відхилення — рядок `invariant broken: …` і `exit 1`.
+
+| Демо         | Вивід                                                                                                         |
+| ------------ | ------------------------------------------------------------------------------------------------------------- |
+| `demo:auth`  | `login=200` `no-token=401` `with-token=200` `refresh=200` `logout=204` `after-logout=401` `refresh-after-logout=401` |
+| `demo:reuse` | `login=200` `r1-refresh=200` `r1-reuse=401` `r2-after-reuse=401`                                              |
+| `demo:rbac`  | `anon=401` `own=200` `foreign=403` `role-denied=403` `role-allowed=201` `tampered=401`                        |
+
+`after-logout=401` — доказ денилиста: без нього той самий access-токен працював би до `exp`. `r2-after-reuse=401` — доказ сімʼї: після повтору `r1` вилетів і чесний клієнт зі свіжим `r2`; якщо прибрати відкликання сімʼї, тут буде `200` і `demo:reuse` завершиться з `exit 1`. `tampered=401` — payload з `role: admin` під старим підписом; рішення на `jwt.decode()` віддало б `201`.
+
 ## Grading
 
 ```bash
 docker compose up -d --wait
 export DB_HOST=127.0.0.1 DB_PORT=6432 DB_USER=admin DB_PASSWORD=admin-secret DB_NAME=shop
+export DB_URL=postgres://admin:admin-secret@127.0.0.1:6432/shop
+export PORT=3000
 export BROKER_URL=amqp://app:app@127.0.0.1:5672 # ← схема amqp, порт AMQP (не 15672)
 export REDIS_URL=redis://127.0.0.1:16379        # кеш, порт як у compose (redis-cache)
-export REDIS_QUEUE_URL=redis://127.0.0.1:16380  # черга / сесії / ліміт (redis-queue)
+export REDIS_QUEUE_URL=redis://127.0.0.1:16380  # черга / сесії / ліміт / денилист (redis-queue)
 export SKIP_VAULT=1    # у грейдера немає доступу до сховища
+
+# одноразова пара ES256 (EC P-256) для прогону; PEM їде в base64, щоб багаторядковість не поїхала
+node -e 'const {generateKeyPairSync}=require("node:crypto");
+const k=generateKeyPairSync("ec",{namedCurve:"P-256",
+  privateKeyEncoding:{type:"pkcs8",format:"pem"},
+  publicKeyEncoding:{type:"spki",format:"pem"}});
+const fs=require("node:fs");
+fs.writeFileSync("/tmp/priv.b64",Buffer.from(k.privateKey).toString("base64"));
+fs.writeFileSync("/tmp/pub.b64",Buffer.from(k.publicKey).toString("base64"));'
+export JWT_KID=grader
+export JWT_PRIVATE_KEY="$(cat /tmp/priv.b64)"
+export JWT_PUBLIC_KEY="$(cat /tmp/pub.b64)"
+export REFRESH_TOKEN_PEPPER="$(node -e 'console.log(require("node:crypto").randomBytes(32).toString("base64url"))')"
+
 npm ci && npx tsc --noEmit
 npm run build
 npm run migrate
@@ -469,7 +574,12 @@ npm run demo:cache
 npm run demo:session
 npm run demo:ratelimit
 npm run demo:queue
+npm run demo:auth
+npm run demo:reuse
+npm run demo:rbac
 ```
+
+Застосунку байдуже, чия це пара, аби вона була валідна, тому справжній ключ лишається у сховищі, а грейдер генерує свій на місці. `REFRESH_TOKEN_PEPPER` — випадкові 32 байти: схема не прийме коротший.
 
 Скрипти `backup.sh` / `restore-drill.sh` читають `DATABASE_URL` з оточення; `with-secrets.sh` при `SKIP_VAULT=1` не ходить у Infisical і просто виконує команду.
 

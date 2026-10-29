@@ -1,4 +1,5 @@
 import { Request, Response } from 'express'
+import type { AuthUser } from '../auth/auth-user'
 import {
 	parseLastEventId,
 	OrderEventsController,
@@ -6,6 +7,9 @@ import {
 import { OrderEventsService } from './order-events.service'
 import { OrdersService } from './orders.service'
 import { ProblemException } from '../types/problem.exception'
+
+const BUYER: AuthUser = { id: '3', role: 'buyer', jti: 'j1', sid: 's1', exp: 0 }
+const OTHER_BUYER: AuthUser = { ...BUYER, id: '4', jti: 'j2', sid: 's2' }
 
 interface FakeResponse {
 	chunks: string[]
@@ -75,14 +79,13 @@ describe('OrderEventsController', () => {
 			controller.streamEvents(
 				'order-1',
 				undefined,
-				undefined,
-				undefined,
+				OTHER_BUYER,
 				{ on: jest.fn() } as unknown as Request,
 				res as unknown as Response,
 			),
 		).rejects.toBeInstanceOf(ProblemException)
 
-		expect(assertCanRead).toHaveBeenCalledWith('order-1', '', '')
+		expect(assertCanRead).toHaveBeenCalledWith('order-1', OTHER_BUYER)
 		expect(res.writeHead).not.toHaveBeenCalled()
 		expect(res.chunks).toEqual([])
 	})
@@ -97,8 +100,7 @@ describe('OrderEventsController', () => {
 		await controller.streamEvents(
 			'order-1',
 			'abc',
-			'buyer-1',
-			'buyer',
+			BUYER,
 			{ on: jest.fn() } as unknown as Request,
 			res as unknown as Response,
 		)
@@ -124,14 +126,13 @@ describe('OrderEventsController', () => {
 		await controller.streamEvents(
 			'1',
 			'1',
-			'buyer-1',
-			'buyer',
+			BUYER,
 			{ on: jest.fn() } as unknown as Request,
 			res as unknown as Response,
 		)
 
 		const body = res.chunks.join('')
-		expect(assertCanRead).toHaveBeenCalledWith('order-1', 'buyer-1', 'buyer')
+		expect(assertCanRead).toHaveBeenCalledWith('order-1', BUYER)
 		expect(body).not.toContain('id: 1\n')
 		expect(body).toContain('id: 2\n')
 		expect(body).toContain('id: 3\n')

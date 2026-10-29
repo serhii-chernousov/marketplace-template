@@ -43,6 +43,14 @@ export class User {
 	balanceCents!: number
 
 	@Column({
+		name: 'password_hash',
+		type: 'text',
+		nullable: true,
+		select: false,
+	})
+	passwordHash!: string | null
+
+	@Column({
 		name: 'created_at',
 		type: 'timestamptz',
 		default: () => 'now()',

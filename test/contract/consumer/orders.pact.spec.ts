@@ -1,7 +1,9 @@
 import path from 'node:path'
 import { PactV3, MatchersV3 } from '@pact-foundation/pact'
 
-const { like } = MatchersV3
+const { like, regex } = MatchersV3
+
+const SAMPLE_BEARER = 'Bearer eyJhbGciOiJFUzI1NiJ9.e30.c2ln'
 
 describe('Marketplace frontend consumer contract', () => {
 	const provider = new PactV3({
@@ -19,8 +21,7 @@ describe('Marketplace frontend consumer contract', () => {
 				path: '/orders',
 				headers: {
 					'Content-Type': 'application/json',
-					'X-User-Id': 'buyer-1',
-					'X-User-Role': 'buyer',
+					Authorization: regex('^Bearer \\S+$', SAMPLE_BEARER),
 					'Idempotency-Key': 'pact-create-order-1',
 				},
 				body: { items: [{ listing_id: 'listing-1', quantity: 1 }] },
@@ -51,8 +52,7 @@ describe('Marketplace frontend consumer contract', () => {
 				method: 'POST',
 				headers: {
 					'Content-Type': 'application/json',
-					'X-User-Id': 'buyer-1',
-					'X-User-Role': 'buyer',
+					Authorization: SAMPLE_BEARER,
 					'Idempotency-Key': 'pact-create-order-1',
 				},
 				body: JSON.stringify({

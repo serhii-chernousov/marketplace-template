@@ -420,6 +420,93 @@ paths:
                 $ref: '#/components/schemas/Me'
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /uploads/intent:
+    post:
+      operationId: createUploadIntent
+      security:
+        - bearerAuth: []
+      summary: Намір завантажити файл
+      description: >
+        Сервер сам генерує ключ обʼєкта (uploads/{userId}/{uuid}.{ext}, розширення — з allowlist за
+        content_type; filename у ключ не потрапляє), створює рядок PENDING і підписує URL. До порогу —
+        один presigned PUT, понад поріг — multipart з підписаними URL на кожну частину. Байти йдуть
+        у сховище напряму, повз API.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UploadIntentRequest'
+      responses:
+        '200':
+          description: Ключ і підписані URL
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadIntent'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /uploads/{id}/parts:
+    get:
+      operationId: getUploadParts
+      security:
+        - bearerAuth: []
+      summary: Стан multipart-завантаження для довантаження
+      description: >
+        ListParts на боці сервера: які частини вже лежать у сховищі, і свіжі підписані URL лише на
+        ті, яких бракує. Клієнт після обриву доливає тільки їх.
+      parameters:
+        - $ref: '#/components/parameters/FileId'
+      responses:
+        '200':
+          description: Завантажені й відсутні частини
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadParts'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /uploads/{id}/commit:
+    post:
+      operationId: commitUpload
+      security:
+        - bearerAuth: []
+      summary: Підтвердити завантаження
+      description: >
+        Для multipart — CompleteMultipartUpload за серверним ListParts. Далі завжди HeadObject:
+        обʼєкта немає або розмір не збігається з заявленим — 409, і лише після звірки рядок стає
+        COMPLETED. Повторний commit уже завершеного файла — 200.
+      parameters:
+        - $ref: '#/components/parameters/FileId'
+      responses:
+        '200':
+          description: Файл у сховищі й звірений
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StoredFile'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
 components:
   securitySchemes:
     bearerAuth:
@@ -471,6 +558,13 @@ components:
       schema:
         type: string
         pattern: '^[0-9]{1,18}$'
+    FileId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
   responses:
     Unauthorized:
       description: Немає, протух, відкликаний або зіпсований токен (чи сесія) — клієнт іде рефрешити або на вхід
@@ -498,6 +592,18 @@ components:
             $ref: '#/components/schemas/Problem'
     Forbidden:
       description: Доступ заборонено
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    NotFound:
+      description: Ресурс не знайдено
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Conflict:
+      description: Стан ресурсу не дозволяє операцію
       content:
         application/problem+json:
           schema:
@@ -806,3 +912,110 @@ components:
         expires_in:
           type: integer
           description: Скільки секунд лишилось після подовження
+    UploadIntentRequest:
+      type: object
+      required: [filename, content_type, size]
+      additionalProperties: false
+      properties:
+        filename:
+          type: string
+          minLength: 1
+          maxLength: 255
+          description: Імʼя на пристрої клієнта. У ключ обʼєкта не потрапляє.
+        content_type:
+          type: string
+          minLength: 1
+          description: MIME-тип з allowlist сервера (image/png, image/jpeg, image/webp, application/pdf, application/gzip)
+        size:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Очікуваний розмір у байтах; commit звіряє його з HeadObject
+    PresignedPart:
+      type: object
+      required: [part_number, url]
+      additionalProperties: false
+      properties:
+        part_number:
+          type: integer
+          minimum: 1
+          maximum: 10000
+        url:
+          type: string
+    UploadIntent:
+      type: object
+      required: [id, key, mode, expires_in]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        key:
+          type: string
+        mode:
+          type: string
+          enum: [single, multipart]
+        expires_in:
+          type: integer
+          description: Строк життя підписаних URL, секунди
+        method:
+          type: string
+          enum: [PUT]
+        url:
+          type: string
+          description: Лише для mode=single
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+          description: Заголовки, які покриває підпис і які клієнт мусить надіслати з PUT
+        part_size:
+          type: integer
+          format: int64
+        part_count:
+          type: integer
+        parts:
+          type: array
+          items:
+            $ref: '#/components/schemas/PresignedPart'
+    UploadParts:
+      type: object
+      required: [id, part_size, part_count, uploaded, missing, expires_in]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        part_size:
+          type: integer
+          format: int64
+        part_count:
+          type: integer
+        uploaded:
+          type: array
+          items:
+            type: integer
+        missing:
+          type: array
+          items:
+            $ref: '#/components/schemas/PresignedPart'
+        expires_in:
+          type: integer
+    StoredFile:
+      type: object
+      required: [id, key, size, status, etag]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        key:
+          type: string
+        size:
+          type: integer
+          format: int64
+        status:
+          type: string
+          enum: [COMPLETED]
+        etag:
+          type: string

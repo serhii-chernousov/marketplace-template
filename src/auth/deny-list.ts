@@ -17,14 +17,14 @@ export class DenyList {
 		await this.redis.set(`deny:jti:${jti}`, '1', 'EX', Math.max(1, remaining))
 	}
 
-	/** Every access token of a family was issued less than ACCESS_TOKEN_TTL_SEC ago. */
-	async denyFamily(familyId: string): Promise<void> {
-		await this.redis.set(
-			`deny:sid:${familyId}`,
-			'1',
-			'EX',
-			ACCESS_TOKEN_TTL_SEC,
-		)
+	/** Every access token of a family was issued before its revocation, so none outlives revokedAt + access TTL. */
+	async denyFamily(familyId: string, revokedAt: Date): Promise<void> {
+		const remaining =
+			Math.ceil((revokedAt.getTime() - Date.now()) / 1000) +
+			ACCESS_TOKEN_TTL_SEC
+		if (remaining > 0) {
+			await this.redis.set(`deny:sid:${familyId}`, '1', 'EX', remaining)
+		}
 	}
 
 	async isDenied(jti: string, familyId: string): Promise<boolean> {

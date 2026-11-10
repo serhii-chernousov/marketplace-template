@@ -9,7 +9,8 @@ import { REFRESH_TOKEN_TTL_SEC } from './auth.constants'
 
 export type Rotation =
 	| { kind: 'rotated'; user: User; familyId: string; refreshToken: string }
-	| { kind: 'reused'; familyId: string; userId: string }
+	| { kind: 'reused'; familyId: string; userId: string; revokedAt: Date }
+	| { kind: 'revoked'; familyId: string; revokedAt: Date }
 	| { kind: 'rejected' }
 
 @Injectable()
@@ -53,22 +54,34 @@ export class RefreshTokenService {
 				return { kind: 'rejected' }
 			}
 			if (current.usedAt) {
-				await this.revokeFamily(current.familyId, manager)
 				return {
 					kind: 'reused',
 					familyId: current.familyId,
 					userId: current.userId,
+					revokedAt:
+						current.revokedAt ??
+						(await this.revokeFamily(current.familyId, manager)),
 				}
 			}
-			if (current.revokedAt || current.expiresAt <= new Date()) {
+			if (current.revokedAt) {
+				return {
+					kind: 'revoked',
+					familyId: current.familyId,
+					revokedAt: current.revokedAt,
+				}
+			}
+			if (current.expiresAt <= new Date()) {
 				return { kind: 'rejected' }
 			}
 			const user = await manager.findOne(User, {
 				where: { id: current.userId },
 			})
 			if (!user?.isActive) {
-				await this.revokeFamily(current.familyId, manager)
-				return { kind: 'rejected' }
+				return {
+					kind: 'revoked',
+					familyId: current.familyId,
+					revokedAt: await this.revokeFamily(current.familyId, manager),
+				}
 			}
 			await manager.update(RefreshToken, current.id, { usedAt: new Date() })
 			const refreshToken = await this.issue(manager, user.id, current.familyId)
@@ -79,12 +92,14 @@ export class RefreshTokenService {
 	async revokeFamily(
 		familyId: string,
 		manager: EntityManager = this.dataSource.manager,
-	): Promise<void> {
+	): Promise<Date> {
+		const revokedAt = new Date()
 		await manager.update(
 			RefreshToken,
 			{ familyId, revokedAt: IsNull() },
-			{ revokedAt: new Date() },
+			{ revokedAt },
 		)
+		return revokedAt
 	}
 
 	private hash(token: string): string {

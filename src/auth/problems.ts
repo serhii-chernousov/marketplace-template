@@ -9,6 +9,15 @@ export const unauthorized = (detail: string, instance: string) =>
 		instance,
 	)
 
+export const authUnavailable = (detail: string, instance: string) =>
+	new ProblemException(
+		503,
+		'https://marketplace.local/problems/auth-unavailable',
+		'Service Unavailable',
+		detail,
+		instance,
+	)
+
 export const forbidden = (detail: string, instance: string) =>
 	new ProblemException(
 		403,

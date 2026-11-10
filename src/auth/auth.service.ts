@@ -7,7 +7,7 @@ import { ACCESS_TOKEN_TTL_SEC } from './auth.constants'
 import type { AuthUser } from './auth-user'
 import { DenyList } from './deny-list'
 import { verifyPassword } from './password'
-import { unauthorized } from './problems'
+import { authUnavailable, unauthorized } from './problems'
 import { RefreshTokenService } from './refresh-token.service'
 
 export interface TokenPair {
@@ -54,7 +54,11 @@ export class AuthService {
 			this.logger.warn(
 				`refresh token reuse detected: family_id=${rotation.familyId} user_id=${rotation.userId}, family revoked`,
 			)
-			await this.denyFamilyBestEffort(rotation.familyId)
+		}
+		if (rotation.kind === 'reused' || rotation.kind === 'revoked') {
+			await this.writeDenyList('/v1/auth/refresh', () =>
+				this.denyList.denyFamily(rotation.familyId, rotation.revokedAt),
+			)
 		}
 		if (rotation.kind !== 'rotated') {
 			throw unauthorized(
@@ -72,11 +76,13 @@ export class AuthService {
 	 * and the retry still passes the guard because Redis was the step that failed.
 	 */
 	async logout(user: AuthUser): Promise<void> {
-		await this.refreshTokens.revokeFamily(user.sid)
-		await Promise.all([
-			this.denyList.denyToken(user.jti, user.exp),
-			this.denyList.denyFamily(user.sid),
-		])
+		const revokedAt = await this.refreshTokens.revokeFamily(user.sid)
+		await this.writeDenyList('/v1/auth/logout', () =>
+			Promise.all([
+				this.denyList.denyToken(user.jti, user.exp),
+				this.denyList.denyFamily(user.sid, revokedAt),
+			]),
+		)
 	}
 
 	async me(user: AuthUser) {
@@ -102,13 +108,23 @@ export class AuthService {
 		}
 	}
 
-	/** The family is already revoked in Postgres; this only shortens the life of its access tokens. */
-	private async denyFamilyBestEffort(familyId: string): Promise<void> {
+	/**
+	 * Postgres already holds the revocation, so a failed Redis write is never
+	 * swallowed: the client gets 503 and retries. Any refresh within the access
+	 * TTL that touches a revoked family writes the entry again, so it converges
+	 * even if the request that detected the reuse is never retried.
+	 */
+	private async writeDenyList(
+		instance: string,
+		write: () => Promise<unknown>,
+	): Promise<void> {
 		try {
-			await this.denyList.denyFamily(familyId)
+			await write()
 		} catch (err) {
-			this.logger.error(
-				`deny-list write failed for family_id=${familyId}: ${(err as Error).message}`,
+			this.logger.error(`deny-list write failed: ${(err as Error).message}`)
+			throw authUnavailable(
+				'Token revocation cannot be recorded right now; retry',
+				instance,
 			)
 		}
 	}

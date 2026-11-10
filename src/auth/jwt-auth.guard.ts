@@ -5,12 +5,11 @@ import {
 	Logger,
 } from '@nestjs/common'
 import { Reflector } from '@nestjs/core'
-import { ProblemException } from '../types/problem.exception'
 import { AccessTokenService } from './access-token.service'
 import type { AuthRequest, AuthUser } from './auth-user'
 import { DenyList } from './deny-list'
 import { IS_PUBLIC_KEY } from './decorators'
-import { unauthorized } from './problems'
+import { authUnavailable, unauthorized } from './problems'
 
 /** The OpenAPI validator only checks that the header mentions "bearer"; this is the real parse. */
 const BEARER = /^Bearer\s+(\S+)$/i
@@ -67,10 +66,7 @@ export class JwtAuthGuard implements CanActivate {
 			return await this.denyList.isDenied(user.jti, user.sid)
 		} catch (err) {
 			this.logger.error(`deny-list unavailable: ${(err as Error).message}`)
-			throw new ProblemException(
-				503,
-				'https://marketplace.local/problems/auth-unavailable',
-				'Service Unavailable',
+			throw authUnavailable(
 				'Token revocation status cannot be checked right now',
 				instance,
 			)

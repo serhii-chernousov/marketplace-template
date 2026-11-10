@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { signingKeyPairProblem } from '../auth/auth-keys'
+import { signingKeyPairProblem, verificationKeyring } from '../auth/auth-keys'
 
 export const envSchema = z.object({
 	PORT: z.coerce.number().int().min(1).max(65535),
@@ -10,8 +10,8 @@ export const envSchema = z.object({
 	DB_NAME: z.string().min(1),
 	DB_URL: z.string().min(1),
 	BROKER_URL: z.string().min(1),
-	REDIS_URL: z.string().min(1).optional(),
-	REDIS_QUEUE_URL: z.string().min(1).optional(),
+	REDIS_URL: z.string().min(1),
+	REDIS_QUEUE_URL: z.string().min(1),
 	LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
 	TIMEOUT_MS: z.coerce.number().int().positive().default(5000),
 })
@@ -21,6 +21,7 @@ export const authEnvSchema = z.object({
 	JWT_PRIVATE_KEY: z.string().min(1),
 	JWT_PUBLIC_KEY: z.string().min(1),
 	JWT_KID: z.string().min(1),
+	JWT_EXTRA_PUBLIC_KEYS: z.string().optional(),
 	REFRESH_TOKEN_PEPPER: z.string().min(32),
 })
 
@@ -36,6 +37,20 @@ const apiEnvSchema = envSchema
 				code: 'custom',
 				path: [problem.variable],
 				message: problem.message,
+			})
+			return
+		}
+		try {
+			verificationKeyring(
+				env.JWT_KID,
+				env.JWT_PUBLIC_KEY,
+				env.JWT_EXTRA_PUBLIC_KEYS,
+			)
+		} catch (err) {
+			ctx.addIssue({
+				code: 'custom',
+				path: ['JWT_EXTRA_PUBLIC_KEYS'],
+				message: (err as Error).message,
 			})
 		}
 	})

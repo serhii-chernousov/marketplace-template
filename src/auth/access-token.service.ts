@@ -1,8 +1,6 @@
 import { Injectable } from '@nestjs/common'
-import { ConfigService } from '@nestjs/config'
 import { JwtService } from '@nestjs/jwt'
 import { randomUUID } from 'node:crypto'
-import type { ApiEnv } from '../config/env.schema'
 import type { UserRole } from '../entities/user.entity'
 import type { AuthUser } from './auth-user'
 
@@ -15,7 +13,6 @@ interface AccessClaims {
 }
 
 interface VerifiedJwt {
-	header: { kid?: string }
 	payload: AccessClaims
 }
 
@@ -23,14 +20,7 @@ export class InvalidAccessTokenError extends Error {}
 
 @Injectable()
 export class AccessTokenService {
-	private readonly kid: string
-
-	constructor(
-		private readonly jwt: JwtService,
-		config: ConfigService<ApiEnv, true>,
-	) {
-		this.kid = config.get('JWT_KID', { infer: true })
-	}
+	constructor(private readonly jwt: JwtService) {}
 
 	sign(subject: { id: string; role: UserRole }, familyId: string) {
 		return this.jwt.signAsync({
@@ -41,7 +31,7 @@ export class AccessTokenService {
 		})
 	}
 
-	/** Signature, algorithm allowlist, iss, aud and exp are checked by verifyOptions of JwtModule. */
+	/** Key by kid, signature, algorithm allowlist, iss, aud and exp all come from jwtOptions. */
 	async verify(token: string): Promise<AuthUser> {
 		let verified: VerifiedJwt
 		try {
@@ -50,9 +40,6 @@ export class AccessTokenService {
 			})
 		} catch (err) {
 			throw new InvalidAccessTokenError((err as Error).message)
-		}
-		if (verified.header.kid !== this.kid) {
-			throw new InvalidAccessTokenError('unknown kid')
 		}
 		const { sub, role, sid, jti, exp } = verified.payload
 		return { id: sub, role, sid, jti, exp }

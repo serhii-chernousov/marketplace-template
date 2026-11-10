@@ -21,6 +21,8 @@ const BASE_ENV = {
 	DB_PASSWORD: 'secret',
 	DB_NAME: 'shop',
 	DB_URL: 'postgres://app:secret@localhost:5432/shop',
+	REDIS_URL: 'redis://localhost:16379',
+	REDIS_QUEUE_URL: 'redis://localhost:16380',
 }
 
 const pair = p256Pair()
@@ -40,6 +42,13 @@ describe('env schema', () => {
 		).toBe('amqp://localhost:5672')
 	})
 
+	it('names a missing REDIS_QUEUE_URL at validation, not later in RedisModule', () => {
+		const { REDIS_QUEUE_URL: _omitted, ...withoutQueue } = BASE_ENV
+		expect(() =>
+			validateWorkerEnv({ ...withoutQueue, BROKER_URL: 'amqp://x' }),
+		).toThrow(/REDIS_QUEUE_URL/)
+	})
+
 	it('names a missing signing key instead of falling back to a default', () => {
 		const { JWT_PRIVATE_KEY: _omitted, ...withoutKey } = AUTH_ENV
 		expect(() =>
@@ -56,6 +65,25 @@ describe('env schema', () => {
 				JWT_PUBLIC_KEY: p256Pair().publicKey,
 			}),
 		).toThrow(/JWT_PUBLIC_KEY: does not match JWT_PRIVATE_KEY/)
+	})
+
+	it('accepts overlap keys as kid:<base64 SPKI PEM> and rejects malformed ones', () => {
+		const env = { ...BASE_ENV, BROKER_URL: 'amqp://x', ...AUTH_ENV }
+		expect(
+			validateApiEnv({
+				...env,
+				JWT_EXTRA_PUBLIC_KEYS: `previous:${p256Pair().publicKey}`,
+			}).JWT_EXTRA_PUBLIC_KEYS,
+		).toMatch(/^previous:/)
+		expect(() =>
+			validateApiEnv({ ...env, JWT_EXTRA_PUBLIC_KEYS: p256Pair().publicKey }),
+		).toThrow(/JWT_EXTRA_PUBLIC_KEYS: each entry must be kid/)
+		expect(() =>
+			validateApiEnv({
+				...env,
+				JWT_EXTRA_PUBLIC_KEYS: `test:${p256Pair().publicKey}`,
+			}),
+		).toThrow(/JWT_EXTRA_PUBLIC_KEYS: kid test is already the signing key/)
 	})
 
 	it('accepts a matching P-256 pair', () => {

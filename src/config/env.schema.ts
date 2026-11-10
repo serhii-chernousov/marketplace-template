@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { signingKeyPairProblem, verificationKeyring } from '../auth/auth-keys'
 
 export const envSchema = z.object({
 	PORT: z.coerce.number().int().min(1).max(65535),
@@ -9,16 +10,59 @@ export const envSchema = z.object({
 	DB_NAME: z.string().min(1),
 	DB_URL: z.string().min(1),
 	BROKER_URL: z.string().min(1),
-	REDIS_URL: z.string().min(1).optional(),
-	REDIS_QUEUE_URL: z.string().min(1).optional(),
+	REDIS_URL: z.string().min(1),
+	REDIS_QUEUE_URL: z.string().min(1),
 	LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
 	TIMEOUT_MS: z.coerce.number().int().positive().default(5000),
 })
 
-export type Env = z.infer<typeof envSchema>
+/** No defaults on purpose: a default signing key is a key committed to git. */
+export const authEnvSchema = z.object({
+	JWT_PRIVATE_KEY: z.string().min(1),
+	JWT_PUBLIC_KEY: z.string().min(1),
+	JWT_KID: z.string().min(1),
+	JWT_EXTRA_PUBLIC_KEYS: z.string().optional(),
+	REFRESH_TOKEN_PEPPER: z.string().min(32),
+})
 
-export function validate(raw: Record<string, unknown>): Env {
-	const parsed = envSchema.safeParse(raw)
+const apiEnvSchema = envSchema
+	.extend(authEnvSchema.shape)
+	.superRefine((env, ctx) => {
+		const problem = signingKeyPairProblem(
+			env.JWT_PRIVATE_KEY,
+			env.JWT_PUBLIC_KEY,
+		)
+		if (problem) {
+			ctx.addIssue({
+				code: 'custom',
+				path: [problem.variable],
+				message: problem.message,
+			})
+			return
+		}
+		try {
+			verificationKeyring(
+				env.JWT_KID,
+				env.JWT_PUBLIC_KEY,
+				env.JWT_EXTRA_PUBLIC_KEYS,
+			)
+		} catch (err) {
+			ctx.addIssue({
+				code: 'custom',
+				path: ['JWT_EXTRA_PUBLIC_KEYS'],
+				message: (err as Error).message,
+			})
+		}
+	})
+
+export type Env = z.infer<typeof envSchema>
+export type ApiEnv = z.infer<typeof apiEnvSchema>
+
+function parseEnv<S extends z.ZodType>(
+	schema: S,
+	raw: Record<string, unknown>,
+): z.infer<S> {
+	const parsed = schema.safeParse(raw)
 	if (!parsed.success) {
 		const lines = parsed.error.issues
 			.map((i) => `  ${i.path.join('.') || '(root)'}: ${i.message}`)
@@ -29,3 +73,10 @@ export function validate(raw: Record<string, unknown>): Env {
 	}
 	return parsed.data
 }
+
+export const validateApiEnv = (raw: Record<string, unknown>): ApiEnv =>
+	parseEnv(apiEnvSchema, raw)
+
+/** The worker never signs tokens, so it does not get the signing key. */
+export const validateWorkerEnv = (raw: Record<string, unknown>): Env =>
+	parseEnv(envSchema, raw)

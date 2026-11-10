@@ -5,13 +5,16 @@ import { parse } from 'dotenv'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const schemaSrc = readFileSync(join(root, 'src/config/env.schema.ts'), 'utf8')
-const objectBody = schemaSrc.match(/z\.object\(\{([\s\S]*?)\n\}\)/)?.[1]
-if (!objectBody) {
+const objectBodies = [
+	...schemaSrc.matchAll(/z\.object\(\{([\s\S]*?)\n\}\)/g),
+].map((m) => m[1])
+if (objectBodies.length === 0) {
 	console.error('✗ Could not parse envSchema in src/config/env.schema.ts')
 	process.exit(1)
 }
 
-const schemaKeys = [...objectBody.matchAll(/^\s*([A-Z][A-Z0-9_]+):/gm)]
+const schemaKeys = objectBodies
+	.flatMap((body) => [...body.matchAll(/^\s*([A-Z][A-Z0-9_]+):/gm)])
 	.map((m) => m[1])
 	.sort()
 const fileKeys = Object.keys(

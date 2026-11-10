@@ -1,5 +1,4 @@
 import {
-	Body,
 	Controller,
 	Delete,
 	Get,
@@ -8,12 +7,14 @@ import {
 	Req,
 	UseGuards,
 } from '@nestjs/common'
+import type { AuthUser } from '../auth/auth-user'
+import { CurrentUser, Public } from '../auth/decorators'
 import { RateLimit } from '../ratelimit/rate-limit.decorator'
 import { SessionStore } from './session-store'
 import { SessionGuard } from './session.guard'
 import type { ActiveSession, SessionRequest } from './session.middleware'
 
-/** Until real auth lands, a session is issued for the claimed user id. */
+/** Opening a session needs an access token; using one needs only X-Session-Id. */
 @Controller('v1/sessions')
 export class SessionsController {
 	constructor(private readonly store: SessionStore) {}
@@ -21,11 +22,12 @@ export class SessionsController {
 	@Post()
 	@HttpCode(201)
 	@RateLimit({ limit: 5, windowMs: 60_000 })
-	async create(@Body() body: { user_id: string }) {
-		const sessionId = await this.store.start(body.user_id)
+	async create(@CurrentUser() user: AuthUser) {
+		const sessionId = await this.store.start(user.id)
 		return { session_id: sessionId, expires_in: this.store.ttlSeconds }
 	}
 
+	@Public()
 	@Get('me')
 	@UseGuards(SessionGuard)
 	async me(@Req() req: SessionRequest) {
@@ -36,6 +38,7 @@ export class SessionsController {
 		}
 	}
 
+	@Public()
 	@Delete('me')
 	@HttpCode(204)
 	@UseGuards(SessionGuard)

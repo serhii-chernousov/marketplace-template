@@ -8,6 +8,8 @@ import { InitSchema1790007847172 } from '../../../src/migrations/1790007847172-I
 import { AddProductsNameUniq1790180000000 } from '../../../src/migrations/1790180000000-AddProductsNameUniq'
 import { AddBalanceAndJobQueue1790200000000 } from '../../../src/migrations/1790200000000-AddBalanceAndJobQueue'
 import { AddOutboxAndInbox1790400000000 } from '../../../src/migrations/1790400000000-AddOutboxAndInbox'
+import { AddAuth1790500000000 } from '../../../src/migrations/1790500000000-AddAuth'
+import { applyTestAuthEnv } from './auth'
 
 let container: StartedPostgreSqlContainer | undefined
 let dataSource: DataSource | undefined
@@ -26,6 +28,8 @@ export function applyTestDatabaseEnv(uri: string): void {
 	process.env.REDIS_URL = process.env.REDIS_URL || 'redis://127.0.0.1:16379'
 	process.env.REDIS_QUEUE_URL =
 		process.env.REDIS_QUEUE_URL || 'redis://127.0.0.1:16380'
+	process.env.BROKER_URL = process.env.BROKER_URL || 'amqp://127.0.0.1:5672'
+	applyTestAuthEnv()
 }
 
 /** Starts postgres:16-alpine for this Jest test file and runs migrations. */
@@ -47,6 +51,7 @@ export async function startTestDatabase(): Promise<DataSource> {
 			AddProductsNameUniq1790180000000,
 			AddBalanceAndJobQueue1790200000000,
 			AddOutboxAndInbox1790400000000,
+			AddAuth1790500000000,
 		],
 	})
 	await dataSource.initialize()

@@ -8,22 +8,13 @@ import {
 } from '../checkout/checkout.service'
 import { Order as OrderRow } from '../entities/order.entity'
 import { Product } from '../entities/product.entity'
+import type { AuthUser } from '../auth/auth-user'
+import { publicUserId, publicUserIdOf } from '../common/public-user-id'
 import { RatingQueueService } from '../queue/rating-queue.service'
 import { User } from '../entities/user.entity'
 import { ProblemException } from '../types/problem.exception'
 import { Order, StoreService } from '../store/store.service'
 import { OrderEventsService } from './order-events.service'
-
-/** OpenAPI demo headers → seed emails (ДЗ #09 curls stay valid). */
-const USER_ALIASES: Record<string, string> = {
-	'buyer-1': 'buyer1@shop.local',
-	'buyer-2': 'buyer2@shop.local',
-	'buyer-3': 'buyer3@shop.local',
-	'buyer-4': 'buyer4@shop.local',
-	'buyer-5': 'buyer5@shop.local',
-	'seller-1': 'seller1@shop.local',
-	'seller-2': 'seller2@shop.local',
-}
 
 const ALLOWED_STATUSES: ReadonlySet<string> = new Set([
 	'pending',
@@ -58,28 +49,21 @@ export class OrdersService {
 		private readonly ratings: RatingQueueService,
 	) {}
 
-	list(userId: string, role: string, limit?: number, cursor?: string) {
+	async list(caller: AuthUser, limit?: number, cursor?: string) {
 		let filtered = [...this.store.orders.values()]
 
-		if (role === 'buyer') {
-			filtered = filtered.filter((o) => o.buyer_id === userId)
-		} else if (role === 'seller') {
-			filtered = filtered.filter((o) => o.seller_id === userId)
-		} else {
-			throw new ProblemException(
-				403,
-				'https://marketplace.local/problems/forbidden',
-				'Forbidden',
-				'Unknown role',
-				'/v1/orders',
+		if (caller.role !== 'admin') {
+			const me = await publicUserIdOf(this.dataSource, caller.id)
+			filtered = filtered.filter((o) =>
+				caller.role === 'buyer' ? o.buyer_id === me : o.seller_id === me,
 			)
 		}
 
 		return this.store.paginate(filtered, limit, cursor)
 	}
 
-	async getById(id: string, userId: string, role: string): Promise<Order> {
-		const { order } = await this.loadAuthorizedOrder(id, userId, role)
+	async getById(id: string, caller: AuthUser): Promise<Order> {
+		const { order } = await this.loadAuthorizedOrder(id, caller)
 		return order
 	}
 
@@ -87,14 +71,13 @@ export class OrdersService {
 	 * Throws 404/403 if the caller cannot read the order.
 	 * Used by WebSocket join and SSE — same ownership rules as GET /v1/orders/:id.
 	 */
-	async assertCanRead(id: string, userId: string, role: string): Promise<void> {
-		await this.loadAuthorizedOrder(id, userId, role)
+	async assertCanRead(id: string, caller: AuthUser): Promise<void> {
+		await this.loadAuthorizedOrder(id, caller)
 	}
 
 	async updateStatus(
 		id: string,
-		userId: string,
-		role: string,
+		caller: AuthUser,
 		status: string,
 	): Promise<{ id: string; status: string }> {
 		if (!ALLOWED_STATUSES.has(status)) {
@@ -109,8 +92,7 @@ export class OrdersService {
 
 		const { canonicalId, row } = await this.loadAuthorizedOrder(
 			id,
-			userId,
-			role,
+			caller,
 			`/orders/${id}/status`,
 		)
 
@@ -126,23 +108,12 @@ export class OrdersService {
 	}
 
 	async create(
-		userId: string,
-		role: string,
+		caller: AuthUser,
 		idempotencyKey: string,
 		body: { items: Array<{ listing_id: string; quantity: number }> },
 	): Promise<{ order: Order; location: string; replay: boolean }> {
-		if (role !== 'buyer') {
-			throw new ProblemException(
-				403,
-				'https://marketplace.local/problems/forbidden',
-				'Forbidden',
-				'Only buyers can create orders',
-				'/v1/orders',
-			)
-		}
-
 		const bodyHash = this.store.hashBody(body)
-		const cacheKey = `${userId}:${idempotencyKey}`
+		const cacheKey = `${caller.id}:${idempotencyKey}`
 		const cached = this.store.idempotencyStore.get(cacheKey)
 		if (cached) {
 			if (cached.bodyHash !== bodyHash) {
@@ -215,13 +186,15 @@ export class OrdersService {
 			})
 		}
 
-		const buyer = await this.resolveBuyer(userId)
+		const buyer = await this.dataSource
+			.getRepository(User)
+			.findOne({ where: { id: caller.id, role: 'buyer', isActive: true } })
 		if (!buyer) {
 			throw new ProblemException(
 				403,
 				'https://marketplace.local/problems/forbidden',
 				'Forbidden',
-				`Unknown buyer ${userId}; use seed alias (buyer-1) or email`,
+				'Only an active buyer account can place orders',
 				'/v1/orders',
 			)
 		}
@@ -271,8 +244,7 @@ export class OrdersService {
 		if (result.replay) {
 			const { order } = await this.loadAuthorizedOrder(
 				`order-${result.orderId}`,
-				userId,
-				role,
+				caller,
 			)
 			const location = `/v1/orders/${order.id}`
 			this.store.idempotencyStore.set(cacheKey, {
@@ -299,7 +271,7 @@ export class OrdersService {
 		const id = `order-${result.orderId}`
 		const order: Order = {
 			id,
-			buyer_id: userId,
+			buyer_id: publicUserId(buyer.email),
 			seller_id: sellerId as string,
 			items: orderItems,
 			total_cents: result.totalCents,
@@ -321,10 +293,13 @@ export class OrdersService {
 		return { order, location, replay: false }
 	}
 
+	/**
+	 * Ownership is decided here, after the row is loaded, not in a guard: a guard
+	 * runs before the resource exists for it. Unknown id → 404, foreign → 403.
+	 */
 	private async loadAuthorizedOrder(
 		id: string,
-		userId: string,
-		role: string,
+		caller: AuthUser,
 		instancePath?: string,
 	): Promise<{
 		canonicalId: string
@@ -359,8 +334,7 @@ export class OrdersService {
 		}
 
 		const order = this.toApiOrder(row, seller)
-		const allowed = await this.callerCanRead(role, userId, row.user, seller)
-		if (!allowed) {
+		if (!callerCanRead(caller, row.user, seller)) {
 			throw new ProblemException(
 				403,
 				'https://marketplace.local/problems/forbidden',
@@ -377,49 +351,6 @@ export class OrdersService {
 		}
 	}
 
-	private async resolveBuyer(headerUserId: string): Promise<User | null> {
-		return this.resolveUser(headerUserId, 'buyer')
-	}
-
-	private async resolveUser(
-		headerUserId: string,
-		role: 'buyer' | 'seller',
-	): Promise<User | null> {
-		const repo = this.dataSource.getRepository(User)
-		const aliasEmail = USER_ALIASES[headerUserId]
-		if (aliasEmail) {
-			return repo.findOne({ where: { email: aliasEmail, role } })
-		}
-		if (headerUserId.includes('@')) {
-			return repo.findOne({
-				where: { email: headerUserId, role },
-			})
-		}
-		if (/^\d+$/.test(headerUserId)) {
-			return repo.findOne({
-				where: { id: headerUserId, role },
-			})
-		}
-		return null
-	}
-
-	private async callerCanRead(
-		role: string,
-		userId: string,
-		buyer: User,
-		seller: User,
-	): Promise<boolean> {
-		if (role === 'buyer') {
-			const caller = await this.resolveUser(userId, 'buyer')
-			return caller?.id === buyer.id
-		}
-		if (role === 'seller') {
-			const caller = await this.resolveUser(userId, 'seller')
-			return caller?.id === seller.id
-		}
-		return false
-	}
-
 	private toApiOrder(row: OrderRow, seller: User): Order {
 		const status: Order['status'] =
 			row.status === 'paid' || row.status === 'cancelled'
@@ -427,8 +358,8 @@ export class OrdersService {
 				: 'created'
 		return {
 			id: `order-${row.id}`,
-			buyer_id: this.publicUserId(row.user.email),
-			seller_id: this.publicUserId(seller.email),
+			buyer_id: publicUserId(row.user.email),
+			seller_id: publicUserId(seller.email),
 			items: row.items.map((item) => ({
 				listing_id: this.listingIdForProduct(item.product.name),
 				quantity: item.quantity,
@@ -439,15 +370,6 @@ export class OrdersService {
 		}
 	}
 
-	private publicUserId(email: string): string {
-		for (const [alias, aliasEmail] of Object.entries(USER_ALIASES)) {
-			if (aliasEmail === email) {
-				return alias
-			}
-		}
-		return email
-	}
-
 	private listingIdForProduct(name: string): string {
 		const needle = name.toLowerCase()
 		for (const listing of this.store.listings.values()) {
@@ -456,5 +378,16 @@ export class OrdersService {
 			}
 		}
 		return name
+	}
+}
+
+function callerCanRead(caller: AuthUser, buyer: User, seller: User): boolean {
+	switch (caller.role) {
+		case 'admin':
+			return true
+		case 'buyer':
+			return caller.id === buyer.id
+		case 'seller':
+			return caller.id === seller.id
 	}
 }

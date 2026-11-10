@@ -3,6 +3,8 @@ import { INestApplication } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
 import { Verifier } from '@pact-foundation/pact'
 import { DataSource } from 'typeorm'
+import { QUEUE_REDIS } from '../../../src/redis/redis.module'
+import { bearerFor, emptyDenyListRedis } from '../../integration/testkit/auth'
 import { seedVintageLampCatalog } from '../../integration/testkit/seed-catalog'
 import {
 	startTestDatabase,
@@ -21,7 +23,10 @@ describe('Marketplace API provider verification', () => {
 		const { configureApp } = await import('../../../src/configure-app')
 		const moduleRef = await Test.createTestingModule({
 			imports: [AppModule],
-		}).compile()
+		})
+			.overrideProvider(QUEUE_REDIS)
+			.useValue(emptyDenyListRedis())
+			.compile()
 		app = moduleRef.createNestApplication()
 		configureApp(app)
 		await app.listen(0, '127.0.0.1')
@@ -67,6 +72,21 @@ describe('Marketplace API provider verification', () => {
 			provider: 'marketplace-api',
 			providerBaseUrl: `http://127.0.0.1:${proxy.port}`,
 			logLevel: 'info',
+			// The contract pins only the header shape; a real token is minted here.
+			// The filter also sees state-setup calls (no Authorization), which run
+			// before buyer1 exists, so those pass through untouched.
+			requestFilter: (req, _res, next) => {
+				if (!req.headers.authorization) {
+					next()
+					return
+				}
+				bearerFor(app, 'buyer1@shop.local')
+					.then((bearer) => {
+						req.headers.authorization = bearer
+						next()
+					})
+					.catch(next)
+			},
 			stateHandlers: {
 				'buyer can purchase listing-1': async () => {
 					await seedVintageLampCatalog(ds)

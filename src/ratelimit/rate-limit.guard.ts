@@ -7,6 +7,7 @@ import {
 import { Reflector } from '@nestjs/core'
 import type { Response } from 'express'
 import { ProblemException } from '../types/problem.exception'
+import type { AuthRequest } from '../auth/auth-user'
 import type { SessionRequest } from '../session/session.middleware'
 import { RateLimit } from './rate-limit.decorator'
 import {
@@ -32,7 +33,9 @@ export class RateLimitGuard implements CanActivate {
 		if (!policy) {
 			return true
 		}
-		const req = context.switchToHttp().getRequest<SessionRequest>()
+		const req = context
+			.switchToHttp()
+			.getRequest<SessionRequest & AuthRequest>()
 		const route = `${context.getClass().name}.${context.getHandler().name}`
 		const bucket = `${route}:${clientKey(req)}`
 
@@ -63,7 +66,7 @@ export class RateLimitGuard implements CanActivate {
 	}
 }
 
-function clientKey(req: SessionRequest): string {
-	const userId = req.header('x-user-id') ?? req.activeSession?.userId
+function clientKey(req: SessionRequest & AuthRequest): string {
+	const userId = req.user?.id ?? req.activeSession?.userId
 	return userId ? `user:${userId}` : `ip:${req.ip}`
 }

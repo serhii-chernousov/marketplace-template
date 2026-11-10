@@ -41,11 +41,7 @@ function redisClient(
 		provide: token,
 		inject: [ConfigService],
 		useFactory: (config: ConfigService<Env, true>): Redis => {
-			const url = config.get(variable, { infer: true })
-			if (!url) {
-				throw new Error(`${variable} is required`)
-			}
-			const client = new Redis(url, {
+			const client = new Redis(config.get(variable, { infer: true }), {
 				lazyConnect: true,
 				maxRetriesPerRequest: 2,
 			})

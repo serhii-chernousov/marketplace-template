@@ -2,6 +2,8 @@ import { INestApplication } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
 import { DataSource } from 'typeorm'
 import request from 'supertest'
+import { QUEUE_REDIS } from '../../src/redis/redis.module'
+import { bearerFor, emptyDenyListRedis } from '../integration/testkit/auth'
 import { seedVintageLampCatalog } from '../integration/testkit/seed-catalog'
 import {
 	startTestDatabase,
@@ -19,7 +21,10 @@ describe('Orders E2E', () => {
 		const { configureApp } = await import('../../src/configure-app')
 		const moduleRef = await Test.createTestingModule({
 			imports: [AppModule],
-		}).compile()
+		})
+			.overrideProvider(QUEUE_REDIS)
+			.useValue(emptyDenyListRedis())
+			.compile()
 		app = moduleRef.createNestApplication()
 		configureApp(app)
 		await app.init()
@@ -39,11 +44,11 @@ describe('Orders E2E', () => {
 
 	it('creates an order and reads it back', async () => {
 		const key = `e2e-${Date.now()}`
+		const buyer = await bearerFor(app, 'buyer1@shop.local')
 		const created = await request(app.getHttpServer())
 			.post('/v1/orders')
 			.set('Content-Type', 'application/json')
-			.set('X-User-Id', 'buyer-1')
-			.set('X-User-Role', 'buyer')
+			.set('Authorization', buyer)
 			.set('Idempotency-Key', key)
 			.send({ items: [{ listing_id: 'listing-1', quantity: 1 }] })
 			.expect(201)
@@ -58,8 +63,7 @@ describe('Orders E2E', () => {
 
 		await request(app.getHttpServer())
 			.get(`/v1/orders/${created.body.id}`)
-			.set('X-User-Id', 'buyer-1')
-			.set('X-User-Role', 'buyer')
+			.set('Authorization', buyer)
 			.expect(200)
 			.expect(created.body)
 	})
@@ -67,8 +71,22 @@ describe('Orders E2E', () => {
 	it('returns 404 for an unknown order', async () => {
 		await request(app.getHttpServer())
 			.get('/v1/orders/missing-order')
-			.set('X-User-Id', 'buyer-1')
-			.set('X-User-Role', 'buyer')
+			.set('Authorization', await bearerFor(app, 'buyer1@shop.local'))
 			.expect(404)
+	})
+
+	it('answers 401 without a token and 403 to the wrong role', async () => {
+		const body = { items: [{ listing_id: 'listing-1', quantity: 1 }] }
+		await request(app.getHttpServer())
+			.post('/v1/orders')
+			.set('Idempotency-Key', 'e2e-anon')
+			.send(body)
+			.expect(401)
+		await request(app.getHttpServer())
+			.post('/v1/orders')
+			.set('Authorization', await bearerFor(app, 'seller1@shop.local'))
+			.set('Idempotency-Key', 'e2e-seller')
+			.send(body)
+			.expect(403)
 	})
 })

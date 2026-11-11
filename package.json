@@ -35,6 +35,9 @@
 		"demo:auth": "bash scripts/with-secrets.sh dev node dist/demo/demo-auth.js",
 		"demo:reuse": "bash scripts/with-secrets.sh dev node dist/demo/demo-reuse.js",
 		"demo:rbac": "bash scripts/with-secrets.sh dev node dist/demo/demo-rbac.js",
+		"demo:upload": "bash scripts/with-secrets.sh dev node dist/demo/demo-upload.js",
+		"demo:multipart": "bash scripts/with-secrets.sh dev node dist/demo/demo-multipart.js",
+		"demo:cdn": "bash scripts/with-secrets.sh dev node dist/demo/demo-cdn.js",
 		"report": "bash scripts/with-secrets.sh dev node dist/report.js",
 		"test:integration": "jest --config jest.config.js --testPathPatterns=test/integration --runInBand",
 		"test:e2e": "jest --config jest.config.js --testPathPatterns=test/e2e --runInBand",
@@ -45,6 +48,8 @@
 		"node": ">=18"
 	},
 	"dependencies": {
+		"@aws-sdk/client-s3": "^3.1165.0",
+		"@aws-sdk/s3-request-presigner": "^3.1165.0",
 		"@nestjs/common": "^11.1.6",
 		"@nestjs/config": "~4.0.2",
 		"@nestjs/core": "^11.1.6",

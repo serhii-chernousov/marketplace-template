@@ -9,6 +9,7 @@ import { AddProductsNameUniq1790180000000 } from '../../../src/migrations/179018
 import { AddBalanceAndJobQueue1790200000000 } from '../../../src/migrations/1790200000000-AddBalanceAndJobQueue'
 import { AddOutboxAndInbox1790400000000 } from '../../../src/migrations/1790400000000-AddOutboxAndInbox'
 import { AddAuth1790500000000 } from '../../../src/migrations/1790500000000-AddAuth'
+import { AddFiles1790600000000 } from '../../../src/migrations/1790600000000-AddFiles'
 import { applyTestAuthEnv } from './auth'
 
 let container: StartedPostgreSqlContainer | undefined
@@ -29,6 +30,10 @@ export function applyTestDatabaseEnv(uri: string): void {
 	process.env.REDIS_QUEUE_URL =
 		process.env.REDIS_QUEUE_URL || 'redis://127.0.0.1:16380'
 	process.env.BROKER_URL = process.env.BROKER_URL || 'amqp://127.0.0.1:5672'
+	process.env.STORAGE_REGION = process.env.STORAGE_REGION || 'us-east-1'
+	process.env.STORAGE_ACCESS_KEY = process.env.STORAGE_ACCESS_KEY || 'test'
+	process.env.STORAGE_SECRET_KEY = process.env.STORAGE_SECRET_KEY || 'test'
+	process.env.STORAGE_BUCKET = process.env.STORAGE_BUCKET || 'test-files'
 	applyTestAuthEnv()
 }
 
@@ -52,6 +57,7 @@ export async function startTestDatabase(): Promise<DataSource> {
 			AddBalanceAndJobQueue1790200000000,
 			AddOutboxAndInbox1790400000000,
 			AddAuth1790500000000,
+			AddFiles1790600000000,
 		],
 	})
 	await dataSource.initialize()

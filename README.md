@@ -15,26 +15,26 @@
 
 ## Структура `src/`
 
-| Каталог                           | Призначення                                                   |
-| --------------------------------- | ------------------------------------------------------------- |
+| Каталог                           | Призначення                                                                                   |
+| --------------------------------- | --------------------------------------------------------------------------------------------- |
 | `auth/`                           | JWT ES256, ротація refresh з детекцією повтору, денилист, гарди `JwtAuthGuard` / `RolesGuard` |
-| `checkout/`                       | `CheckoutService` — транзакційний checkout і запис у outbox  |
-| `orders/`, `listings/`, `health/` | Nest feature-модулі (controller + service + gateway)          |
-| `jobs/`                           | черга `FOR UPDATE SKIP LOCKED`                                |
-| `database/`                       | CLI DataSource, `DatabaseModule`, `DbService`                 |
-| `store/`                          | in-memory catalog/idempotency для OpenAPI                     |
-| `catalog/`                        | `GET /v1/products/:id`: картка товару, cache-aside у Redis    |
-| `common/`                         | `with-retry`, `asRows`, `sleep`                               |
-| `demo/`                           | CLI-скрипти гонки / воркерів / retry / N+1 / RabbitMQ / Redis |
-| `messaging/`                      | RabbitMQ, transactional outbox, relay, ідемпотентний ефект    |
-| `queue/`                          | BullMQ: `RatingQueueService` (продюсер), `RatingWorker`       |
-| `ratelimit/`                      | `@RateLimit` + глобальний guard, ковзне вікно в Redis         |
-| `redis/`                          | `RedisModule`: клієнти кеша й черги, `CONFIG GET`             |
-| `session/`                        | `/v1/sessions`, middleware з rolling TTL, `SessionGuard`      |
-| `storage/`                        | S3-клієнт (MinIO / AWS), presigned PUT і UploadPart          |
-| `uploads/`                        | intent / parts / commit: allowlist, поріг multipart, HeadObject |
-| `cdn/`                            | edge з `X-Cache` перед приватним бакетом, ассети з хешем в імені |
-| `entities/`, `migrations/`        | схема TypeORM                                                 |
+| `checkout/`                       | `CheckoutService` — транзакційний checkout і запис у outbox                                   |
+| `orders/`, `listings/`, `health/` | Nest feature-модулі (controller + service + gateway)                                          |
+| `jobs/`                           | черга `FOR UPDATE SKIP LOCKED`                                                                |
+| `database/`                       | CLI DataSource, `DatabaseModule`, `DbService`                                                 |
+| `store/`                          | in-memory catalog/idempotency для OpenAPI                                                     |
+| `catalog/`                        | `GET /v1/products/:id`: картка товару, cache-aside у Redis                                    |
+| `common/`                         | `with-retry`, `asRows`, `sleep`                                                               |
+| `demo/`                           | CLI-скрипти гонки / воркерів / retry / N+1 / RabbitMQ / Redis                                 |
+| `messaging/`                      | RabbitMQ, transactional outbox, relay, ідемпотентний ефект                                    |
+| `queue/`                          | BullMQ: `RatingQueueService` (продюсер), `RatingWorker`                                       |
+| `ratelimit/`                      | `@RateLimit` + глобальний guard, ковзне вікно в Redis                                         |
+| `redis/`                          | `RedisModule`: клієнти кеша й черги, `CONFIG GET`                                             |
+| `session/`                        | `/v1/sessions`, middleware з rolling TTL, `SessionGuard`                                      |
+| `storage/`                        | S3-клієнт (MinIO / AWS), presigned PUT і UploadPart                                           |
+| `uploads/`                        | intent / parts / commit: allowlist, поріг multipart, HeadObject                               |
+| `cdn/`                            | edge з `X-Cache` перед приватним бакетом, ассети з хешем в імені                              |
+| `entities/`, `migrations/`        | схема TypeORM                                                                                 |
 
 Realtime-файли в `orders/`: `order-events.service.ts` (шина Subject + буфер), `orders.gateway.ts` (кімнати), `order-events.controller.ts` (SSE + PATCH status). Headless-демо: `scripts/realtime-demo.mjs`.
 
@@ -178,11 +178,11 @@ LIMIT N
 
 **Власні прогони** (після `docker compose up -d --wait`, `npm run build`, `npm run migrate`, `SKIP_VAULT=1`):
 
-| Демо | Вихід |
-| --- | --- |
-| `demo:outbox` | `requests=2` `orders=1` `outbox=1` `published=1` `deliveries=1` `effect=1` `processed=1` |
-| `demo:crash-write` | `write-failed=1` `orders=0` `outbox=0` `published=0` `deliveries=0` `effect=0` |
-| `demo:crash-relay` | `published=1` `deliveries=2` `applied=1` `effect=1` `processed=1` |
+| Демо               | Вихід                                                                                    |
+| ------------------ | ---------------------------------------------------------------------------------------- |
+| `demo:outbox`      | `requests=2` `orders=1` `outbox=1` `published=1` `deliveries=1` `effect=1` `processed=1` |
+| `demo:crash-write` | `write-failed=1` `orders=0` `outbox=0` `published=0` `deliveries=0` `effect=0`           |
+| `demo:crash-relay` | `published=1` `deliveries=2` `applied=1` `effect=1` `processed=1`                        |
 
 Exactly-once доставки не існує — це задача двох генералів. Є at-least-once доставка плюс ідемпотентний ефект, і разом вони дають exactly-once результат. `demo:crash-relay` це показує очима: та сама подія доїхала двічі (`deliveries=2`), ефект застосовано один раз (`effect=1`).
 
@@ -192,20 +192,20 @@ Exactly-once доставки не існує — це задача двох г�
 
 TypeORM CLI (`src/database/data-source.ts`) читає `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME` з `process.env` — їх треба тримати в Infisical `dev` (основний шлях: `infisical run`). Nest HTTP піднімає той самий TypeORM через `DatabaseModule` (`DB_PASSWORD` з Config). `/db` health додатково вміє читати `secrets/db_password` (ДЗ #11) з fallback на `DB_PASSWORD`.
 
-| Змінна        | Обов'язкова        | Опис                                                                        |
-| ------------- | ------------------ | --------------------------------------------------------------------------- |
-| `PORT`        | так                | HTTP-порт                                                                   |
-| `DB_HOST`     | так                | Хост Postgres (`localhost` для Nest на хості)                               |
-| `DB_PORT`     | так                | Порт Postgres                                                               |
-| `DB_USER`     | так                | Роль застосунку (`app_user`) або `admin` для CLI грейдера                   |
-| `DB_PASSWORD` | так                | Пароль для TypeORM DataSource (`migrate` / `seed` / `demo` / `report`)      |
-| `DB_NAME`     | так                | Ім'я бази (`shop`)                                                          |
-| `DB_URL`      | так                | Рядок підключення Nest; джерело — сховище                                   |
-| `BROKER_URL`  | так                | AMQP URL RabbitMQ (`amqp://…@host:5672`); у Infisical `dev` поруч із `DB_*` |
-| `REDIS_URL`   | так                | Redis-кеш (`allkeys-lru`)                                                   |
-| `REDIS_QUEUE_URL` | так            | Redis без витіснення: черга, сесії, ліміт, денилист токенів                 |
-| `LOG_LEVEL`   | ні (дефолт `info`) | `debug` \| `info` \| `warn` \| `error`                                      |
-| `TIMEOUT_MS`  | ні (дефолт `5000`) | Таймаут у мс                                                                |
+| Змінна            | Обов'язкова        | Опис                                                                        |
+| ----------------- | ------------------ | --------------------------------------------------------------------------- |
+| `PORT`            | так                | HTTP-порт                                                                   |
+| `DB_HOST`         | так                | Хост Postgres (`localhost` для Nest на хості)                               |
+| `DB_PORT`         | так                | Порт Postgres                                                               |
+| `DB_USER`         | так                | Роль застосунку (`app_user`) або `admin` для CLI грейдера                   |
+| `DB_PASSWORD`     | так                | Пароль для TypeORM DataSource (`migrate` / `seed` / `demo` / `report`)      |
+| `DB_NAME`         | так                | Ім'я бази (`shop`)                                                          |
+| `DB_URL`          | так                | Рядок підключення Nest; джерело — сховище                                   |
+| `BROKER_URL`      | так                | AMQP URL RabbitMQ (`amqp://…@host:5672`); у Infisical `dev` поруч із `DB_*` |
+| `REDIS_URL`       | так                | Redis-кеш (`allkeys-lru`)                                                   |
+| `REDIS_QUEUE_URL` | так                | Redis без витіснення: черга, сесії, ліміт, денилист токенів                 |
+| `LOG_LEVEL`       | ні (дефолт `info`) | `debug` \| `info` \| `warn` \| `error`                                      |
+| `TIMEOUT_MS`      | ні (дефолт `5000`) | Таймаут у мс                                                                |
 
 ## Postgres (ДЗ #12)
 
@@ -454,15 +454,15 @@ Cache-aside стоїть на читанні картки товару `GET /v1/
 
 ### Змінні
 
-| Змінна                 | Джерело                                    | Навіщо                                                                        |
-| ---------------------- | ------------------------------------------ | ----------------------------------------------------------------------------- |
-| `JWT_PRIVATE_KEY`      | сховище (#11), Infisical `dev` / `prod`    | підпис access-токенів: base64 від PKCS#8 PEM, EC P-256                        |
-| `JWT_PUBLIC_KEY`       | сховище (#11), Infisical `dev` / `prod`    | перевірка підпису: base64 від SPKI PEM тієї ж пари                            |
-| `JWT_KID`              | сховище (#11), Infisical `dev` / `prod`    | `kid` у заголовку токена; міняється з кожною ротацією ключа                   |
-| `JWT_EXTRA_PUBLIC_KEYS` | сховище (#11), лише на час ротації         | інші ключі перевірки: `kid:<base64 SPKI PEM>` через кому; поза ротацією порожня |
-| `REFRESH_TOKEN_PEPPER` | сховище (#11), Infisical `dev` / `prod`    | ключ HMAC для `refresh_tokens.token_hash`, ≥ 32 символи                       |
-| `DB_HOST` … `DB_NAME`  | compose / оточення                         | дев-креденшели Postgres                                                       |
-| `REDIS_QUEUE_URL`      | compose / оточення                         | noeviction-Redis: денилист, сесії, ліміт                                      |
+| Змінна                  | Джерело                                 | Навіщо                                                                          |
+| ----------------------- | --------------------------------------- | ------------------------------------------------------------------------------- |
+| `JWT_PRIVATE_KEY`       | сховище (#11), Infisical `dev` / `prod` | підпис access-токенів: base64 від PKCS#8 PEM, EC P-256                          |
+| `JWT_PUBLIC_KEY`        | сховище (#11), Infisical `dev` / `prod` | перевірка підпису: base64 від SPKI PEM тієї ж пари                              |
+| `JWT_KID`               | сховище (#11), Infisical `dev` / `prod` | `kid` у заголовку токена; міняється з кожною ротацією ключа                     |
+| `JWT_EXTRA_PUBLIC_KEYS` | сховище (#11), лише на час ротації      | інші ключі перевірки: `kid:<base64 SPKI PEM>` через кому; поза ротацією порожня |
+| `REFRESH_TOKEN_PEPPER`  | сховище (#11), Infisical `dev` / `prod` | ключ HMAC для `refresh_tokens.token_hash`, ≥ 32 символи                         |
+| `DB_HOST` … `DB_NAME`   | compose / оточення                      | дев-креденшели Postgres                                                         |
+| `REDIS_QUEUE_URL`       | compose / оточення                      | noeviction-Redis: денилист, сесії, ліміт                                        |
 
 Жодна з чотирьох змінних сховища не має дефолту в Zod-схемі: дефолт для ключа — це ключ, закомічений у git. Ціна витоку тут інша, ніж у `DB_URL`: рядок підключення дає доступ до бази з мережі, а ключ підпису дає змогу виписати собі токен будь-кого, не маючи жодного доступу. Конфіг валідується в `ConfigModule.forRoot` — до `DataSource.initialize()`, тому голий `npm run start` без ключів падає з `exit 1` і називає змінні (`JWT_PRIVATE_KEY: Invalid input…`), а не `ECONNREFUSED`. Схема також перевіряє, що ключі розбираються, що це P-256 і що публічний ключ — пара приватному. `npm run start:vault` і всі `demo:*` йдуть через `bash scripts/with-secrets.sh dev …`. Воркер черги (`start:worker`) валідує лише базову схему: ключа підпису він не тримає.
 
@@ -477,8 +477,8 @@ bash scripts/with-secrets.sh prod node scripts/jwt-keygen.mjs --fingerprint
 
 Відбиток — SHA-256 від SPKI DER публічного ключа; той самий рядок застосунок пише в лог при старті для кожного ключа перевірки (`ES256 verification kid=… fingerprint=…`). Ні токени, ні їхні хвости в лог не йдуть — лише `kid`, відбиток, `family_id`, `user_id`.
 
-| Оточення | `kid`          | Відбиток публічного ключа |
-| -------- | -------------- | ------------------------- |
+| Оточення | `kid`          | Відбиток публічного ключа                             |
+| -------- | -------------- | ----------------------------------------------------- |
 | dev      | `dev-2026-10`  | `SHA256:…` _(вписати вивід `--fingerprint` для dev)_  |
 | prod     | `prod-2026-10` | `SHA256:…` _(вписати вивід `--fingerprint` для prod)_ |
 
@@ -515,11 +515,11 @@ Refresh-токен — рядок у базі: щоб убити його, до�
 
 ### 401 проти 403
 
-| Ситуація                                               | Код   | Хто вирішує                               |
-| ------------------------------------------------------ | ----- | ----------------------------------------- |
+| Ситуація                                                          | Код   | Хто вирішує                                        |
+| ----------------------------------------------------------------- | ----- | -------------------------------------------------- |
 | немає токена, зіпсований підпис, протух, чужий `kid`, у денилисті | `401` | `JwtAuthGuard` (глобальний, `@Public()` — виняток) |
-| токен валідний, роль не та                             | `403` | `RolesGuard` + `@Roles(...)`              |
-| токен валідний, ресурс чужий                           | `403` | `OrdersService` після завантаження        |
+| токен валідний, роль не та                                        | `403` | `RolesGuard` + `@Roles(...)`                       |
+| токен валідний, ресурс чужий                                      | `403` | `OrdersService` після завантаження                 |
 
 Клієнтський SDK на `401` іде рефрешити, на `403` показує помилку, тому їх не можна плутати. Обидва гарди зареєстровані як `APP_GUARD` в `AppModule` — нові маршрути закриті, доки їх явно не позначено `@Public()`.
 
@@ -533,11 +533,11 @@ Refresh-токен — рядок у базі: щоб убити його, до�
 
 Кожне демо саме піднімає застосунок у своєму процесі на своєму порту (`demo:auth` — 3401, `demo:reuse` — 3402, `demo:rbac` — 3403), тож сирітський сервер, який тримав би порт після вбитого по таймауту запуску, неможливий. Стан приводиться до чистого: демо створює власних користувачів (`demo-*@shop.local`) зі свіжим випадковим паролем і чистить лише їхні замовлення, товари й refresh-токени. Інваріант перевіряється в самому скрипті: будь-яке відхилення — рядок `invariant broken: …` і `exit 1`.
 
-| Демо         | Вивід                                                                                                         |
-| ------------ | ------------------------------------------------------------------------------------------------------------- |
+| Демо         | Вивід                                                                                                                |
+| ------------ | -------------------------------------------------------------------------------------------------------------------- |
 | `demo:auth`  | `login=200` `no-token=401` `with-token=200` `refresh=200` `logout=204` `after-logout=401` `refresh-after-logout=401` |
-| `demo:reuse` | `login=200` `r1-refresh=200` `r1-reuse=401` `r2-after-reuse=401`                                              |
-| `demo:rbac`  | `anon=401` `own=200` `foreign=403` `role-denied=403` `role-allowed=201` `tampered=401`                        |
+| `demo:reuse` | `login=200` `r1-refresh=200` `r1-reuse=401` `r2-after-reuse=401`                                                     |
+| `demo:rbac`  | `anon=401` `own=200` `foreign=403` `role-denied=403` `role-allowed=201` `tampered=401`                               |
 
 `after-logout=401` — доказ денилиста: без нього той самий access-токен працював би до `exp`. `r2-after-reuse=401` — доказ сімʼї: після повтору `r1` вилетів і чесний клієнт зі свіжим `r2`; якщо прибрати відкликання сімʼї, тут буде `200` і `demo:reuse` завершиться з `exit 1`. `tampered=401` — payload з `role: admin` під старим підписом; рішення на `jwt.decode()` віддало б `201`.
 
@@ -547,20 +547,20 @@ Refresh-токен — рядок у базі: щоб убити його, до�
 
 ### Змінні
 
-| Змінна                                  | Джерело                                                  | Навіщо                                                                     |
-| --------------------------------------- | -------------------------------------------------------- | -------------------------------------------------------------------------- |
-| `STORAGE_ACCESS_KEY`                    | тільки сховище (#11), Infisical `dev` / `prod`           | ключ доступу до сховища                                                    |
-| `STORAGE_SECRET_KEY`                    | тільки сховище (#11), Infisical `dev` / `prod`           | секрет до ключа; без дефолту в Zod-схемі                                   |
-| `STORAGE_ENDPOINT`                      | сховище (#11), Infisical `dev`; у грейдера — `export`    | адреса S3 API; порожньо → справжній AWS S3                                 |
-| `STORAGE_REGION`                        | сховище (#11), Infisical `dev` / `prod`                  | регіон підпису SigV4 (`us-east-1` для MinIO)                               |
-| `STORAGE_BUCKET`                        | сховище (#11), Infisical `dev` / `prod`                  | приватний бакет: і `uploads/`, і `assets/`                                 |
-| `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` | `docker-compose.yaml` (дефолти дев-стенда)             | креденшели локального MinIO; секретом не є, як і пароль Postgres у compose |
+| Змінна                                    | Джерело                                               | Навіщо                                                                     |
+| ----------------------------------------- | ----------------------------------------------------- | -------------------------------------------------------------------------- |
+| `STORAGE_ACCESS_KEY`                      | тільки сховище (#11), Infisical `dev` / `prod`        | ключ доступу до сховища                                                    |
+| `STORAGE_SECRET_KEY`                      | тільки сховище (#11), Infisical `dev` / `prod`        | секрет до ключа; без дефолту в Zod-схемі                                   |
+| `STORAGE_ENDPOINT`                        | сховище (#11), Infisical `dev`; у грейдера — `export` | адреса S3 API; порожньо → справжній AWS S3                                 |
+| `STORAGE_REGION`                          | сховище (#11), Infisical `dev` / `prod`               | регіон підпису SigV4 (`us-east-1` для MinIO)                               |
+| `STORAGE_BUCKET`                          | сховище (#11), Infisical `dev` / `prod`               | приватний бакет: і `uploads/`, і `assets/`                                 |
+| `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` | `docker-compose.yaml` (дефолти дев-стенда)            | креденшели локального MinIO; секретом не є, як і пароль Postgres у compose |
 
 Нових env-файлів немає: значення живуть у Infisical `dev`, а `demo:upload`, `demo:multipart`, `demo:cdn` ідуть через `bash scripts/with-secrets.sh dev …` — так само, як `migrate` / `seed`. Схема `storageEnvSchema` (`src/config/env.schema.ts`) не має дефолтів для ключів. Ціна витоку тут інша, ніж у `DB_URL`: ключ сховища — це право читати й писати всі файли всіх користувачів з будь-якої точки інтернету, а приватний ключ підпису CDN (якщо дійде до signed URL, див. нижче) — право видати собі доступ до всього приватного контенту дистрибуції.
 
 ### Двокроковий контракт
 
-1. `POST /v1/uploads/intent` `{ filename, content_type, size }` → `200`. Маршрут закритий глобальним `JwtAuthGuard` з ДЗ #24. `content_type` перевіряється за allowlist (`image/png`, `image/jpeg`, `image/webp`, `application/pdf`, `application/gzip`), і розширення береться з нього. Ключ генерує сервер: `uploads/{userId}/{uuid}.{ext}`. `filename` у ключ не потрапляє — інакше клієнт міг би писати за будь-яким шляхом у бакеті (`demo:upload` шле `../../etc/passwd` і перевіряє `key-from-server=1`). У `files` зʼявляється рядок `PENDING`.
+1. `POST /v1/uploads/intent` з заголовком `Idempotency-Key` і тілом `{ filename, content_type, size }` → `200`. Без ключа — `400`. Той самий ключ і те саме тіло повертають той самий рядок `PENDING` і той самий multipart (`Idempotency-Replay: true`), тож подвійний тап не відкриває друге незавершене завантаження. Той самий ключ з іншим тілом — `422`. Маршрут закритий глобальним `JwtAuthGuard` з ДЗ #24. `content_type` перевіряється за allowlist (`image/png`, `image/jpeg`, `image/webp`, `application/pdf`, `application/gzip`), і розширення береться з нього. Ключ обʼєкта генерує сервер: `uploads/{userId}/{uuid}.{ext}`. `filename` у ключ не потрапляє — інакше клієнт міг би писати за будь-яким шляхом у бакеті (`demo:upload` шле `../../etc/passwd` і перевіряє `key-from-server=1`).
 2. Клієнт кладе байти за presigned URL напряму у сховище. Підпис покриває ключ (підмінений ключ → `403 SignatureDoesNotMatch`) і `Content-Type` — SDK за замовчуванням його не підписує, тому `signableHeaders: ['content-type']`.
 3. `POST /v1/uploads/{id}/commit` → `HeadObject`. Обʼєкта немає → `409`; розмір не збігається з заявленим у intent → `409`. Лише після звірки — `COMPLETED`. Presigned PUT довжину тіла не обмежує (`UNSIGNED-PAYLOAD`), тож звірка розміру живе саме тут. Повторний commit завершеного файла — `200`.
 
@@ -605,7 +605,7 @@ Content-Type від клієнта — це його слова. Якщо тип
 
 ### CDN: обрана форма — локальний edge
 
-`src/cdn/edge.ts` — маленький edge на `node:http`: `GET /assets/…` → кеш у памʼяті → на промаху `GetObject` клієнтом SDK зі **своїми** креденшелами → відповідь із власним `X-Cache: HIT|MISS`. Це і є суть OAC: до сховища ходить кеш, а не публіка. Бакет приватний — анонімний GET прямо у сховище дає `403`. Edge роздає лише префікс `assets/`: інакше приватні `uploads/{userId}/…` стали б публічними через кеш. Кешує тільки те, що дозволив origin (`max-age > 0`, без `no-store` / `no-cache` / `private`): заголовок ставиться на обʼєкт під час завантаження, а не в edge.
+`src/cdn/edge.ts` — маленький edge на `node:http`: `GET` і `HEAD /assets/…` → кеш у памʼяті → на промаху `GetObject` клієнтом SDK зі **своїми** креденшелами → відповідь із власним `X-Cache: HIT|MISS`. `HEAD` віддає ті самі заголовки, що й `GET`, без тіла. Це і є суть OAC: до сховища ходить кеш, а не публіка. Бакет приватний — анонімний GET прямо у сховище дає `403`. Edge роздає лише префікс `assets/`: інакше приватні `uploads/{userId}/…` стали б публічними через кеш. Кешує тільки те, що дозволив origin (`max-age > 0`, без `no-store` / `no-cache` / `private`): заголовок ставиться на обʼєкт під час завантаження, а не в edge.
 
 ### Bucket policy для AWS-варіанту (CloudFront + OAC)
 

@@ -430,7 +430,20 @@ paths:
         Сервер сам генерує ключ обʼєкта (uploads/{userId}/{uuid}.{ext}, розширення — з allowlist за
         content_type; filename у ключ не потрапляє), створює рядок PENDING і підписує URL. До порогу —
         один presigned PUT, понад поріг — multipart з підписаними URL на кожну частину. Байти йдуть
-        у сховище напряму, повз API.
+        у сховище напряму, повз API. Потрібен Idempotency-Key: повтор із тим самим ключем і тілом
+        повертає той самий рядок і той самий multipart, без другого PENDING.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: >
+            Ключ ідемпотентності наміру. Той самий ключ і те саме тіло повертають той самий
+            файл (повтор безпечний, заголовок Idempotency-Replay: true). Той самий ключ з
+            іншим тілом — 422.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
       requestBody:
         required: true
         content:
@@ -440,6 +453,12 @@ paths:
       responses:
         '200':
           description: Ключ і підписані URL
+          headers:
+            Idempotency-Replay:
+              description: true, якщо відповідь відтворена з уже створеного наміру
+              schema:
+                type: string
+                enum: ['true']
           content:
             application/json:
               schema:
@@ -450,6 +469,12 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '422':
+          description: Той самий Idempotency-Key з іншим тілом
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
   /uploads/{id}/parts:
     get:
       operationId: getUploadParts

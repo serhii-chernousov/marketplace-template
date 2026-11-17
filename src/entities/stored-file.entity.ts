@@ -2,6 +2,9 @@ import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm'
 
 export type StoredFileStatus = 'PENDING' | 'COMPLETED'
 
+@Index('idx_files_owner_idempotency', ['ownerId', 'idempotencyKey'], {
+	unique: true,
+})
 @Entity('files')
 export class StoredFile {
 	@PrimaryGeneratedColumn('uuid')
@@ -27,6 +30,14 @@ export class StoredFile {
 
 	@Column({ name: 'upload_id', type: 'text', nullable: true })
 	uploadId!: string | null
+
+	/** With owner_id, the client's Idempotency-Key. Null only on rows from before the column existed. */
+	@Column({ name: 'idempotency_key', type: 'text', nullable: true })
+	idempotencyKey!: string | null
+
+	/** Hash of the intent body, so the same key with a different body is a conflict. */
+	@Column({ name: 'request_hash', type: 'text', nullable: true })
+	requestHash!: string | null
 
 	@Column({
 		name: 'created_at',

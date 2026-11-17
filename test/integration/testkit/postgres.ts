@@ -10,6 +10,7 @@ import { AddBalanceAndJobQueue1790200000000 } from '../../../src/migrations/1790
 import { AddOutboxAndInbox1790400000000 } from '../../../src/migrations/1790400000000-AddOutboxAndInbox'
 import { AddAuth1790500000000 } from '../../../src/migrations/1790500000000-AddAuth'
 import { AddFiles1790600000000 } from '../../../src/migrations/1790600000000-AddFiles'
+import { AddUploadIdempotency1790700000000 } from '../../../src/migrations/1790700000000-AddUploadIdempotency'
 import { applyTestAuthEnv } from './auth'
 
 let container: StartedPostgreSqlContainer | undefined
@@ -58,6 +59,7 @@ export async function startTestDatabase(): Promise<DataSource> {
 			AddOutboxAndInbox1790400000000,
 			AddAuth1790500000000,
 			AddFiles1790600000000,
+			AddUploadIdempotency1790700000000,
 		],
 	})
 	await dataSource.initialize()

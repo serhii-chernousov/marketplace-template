@@ -1,4 +1,5 @@
 import {
+	AbortMultipartUploadCommand,
 	CompleteMultipartUploadCommand,
 	CreateMultipartUploadCommand,
 	HeadObjectCommand,
@@ -8,8 +9,8 @@ import {
 	type S3Client,
 } from '@aws-sdk/client-s3'
 import { Inject, Injectable, Logger } from '@nestjs/common'
-import { randomUUID } from 'node:crypto'
-import { DataSource } from 'typeorm'
+import { createHash, randomUUID } from 'node:crypto'
+import { DataSource, QueryFailedError } from 'typeorm'
 import type { AuthUser } from '../auth/auth-user'
 import { forbidden } from '../auth/problems'
 import { StoredFile } from '../entities/stored-file.entity'
@@ -25,7 +26,12 @@ import {
 	partCountFor,
 	partSizeFor,
 } from './upload-policy'
-import { fileNotFound, invalidUpload, uploadConflict } from './upload-problems'
+import {
+	fileNotFound,
+	idempotencyConflict,
+	invalidUpload,
+	uploadConflict,
+} from './upload-problems'
 
 export interface UploadIntentRequest {
 	filename: string
@@ -75,7 +81,26 @@ export interface CommittedFile {
 	etag: string
 }
 
+const UNIQUE_VIOLATION = '23505'
+
 const range = (count: number) => Array.from({ length: count }, (_, i) => i + 1)
+
+function hashIntent(request: UploadIntentRequest): string {
+	return createHash('sha256')
+		.update(
+			JSON.stringify({
+				filename: request.filename,
+				content_type: request.content_type,
+				size: request.size,
+			}),
+		)
+		.digest('hex')
+}
+
+export interface UploadIntentResult {
+	intent: UploadIntent
+	replay: boolean
+}
 
 /**
  * The API stays on the authorization path but off the data path: it signs
@@ -96,7 +121,11 @@ export class UploadsService {
 		owner: AuthUser,
 		request: UploadIntentRequest,
 		instance: string,
-	): Promise<UploadIntent> {
+		idempotencyKey: string,
+	): Promise<UploadIntentResult> {
+		if (!idempotencyKey) {
+			throw invalidUpload('Idempotency-Key is required', instance)
+		}
 		const extension = extensionFor(request.content_type)
 		if (!extension) {
 			throw invalidUpload(
@@ -110,60 +139,67 @@ export class UploadsService {
 				instance,
 			)
 		}
+		const requestHash = hashIntent(request)
+		const existing = await this.files().findOneBy({
+			ownerId: owner.id,
+			idempotencyKey,
+		})
+		if (existing) {
+			this.assertSameIntent(existing, requestHash, instance)
+			return { intent: await this.intentFor(existing), replay: true }
+		}
+
 		const contentType = request.content_type.toLowerCase()
 		const ref = this.ref(`uploads/${owner.id}/${randomUUID()}.${extension}`)
+		const multipart = needsMultipart(request.size)
+		let uploadId: string | null = null
+		if (multipart) {
+			const created = await this.s3.send(
+				new CreateMultipartUploadCommand({
+					Bucket: ref.bucket,
+					Key: ref.key,
+					ContentType: contentType,
+				}),
+			)
+			uploadId = created.UploadId ?? null
+		}
 
-		if (!needsMultipart(request.size)) {
-			const file = await this.files().save(
+		let file: StoredFile
+		try {
+			file = await this.files().save(
 				this.files().create({
 					ownerId: owner.id,
 					key: ref.key,
 					contentType,
 					size: String(request.size),
+					uploadId,
+					idempotencyKey,
+					requestHash,
 				}),
 			)
-			this.logger.log(`upload intent fileId=${file.id} key=${ref.key} single`)
-			return {
-				id: file.id,
-				key: ref.key,
-				mode: 'single',
-				method: 'PUT',
-				url: await presignPut(this.s3, ref, contentType, PUT_URL_TTL_SECONDS),
-				headers: { 'Content-Type': contentType },
-				expires_in: PUT_URL_TTL_SECONDS,
+		} catch (err) {
+			await this.abortMultipart(ref.key, uploadId)
+			if (!this.isUniqueViolation(err)) {
+				throw err
 			}
+			const winner = await this.files().findOneBy({
+				ownerId: owner.id,
+				idempotencyKey,
+			})
+			if (!winner) {
+				throw err
+			}
+			this.assertSameIntent(winner, requestHash, instance)
+			return { intent: await this.intentFor(winner), replay: true }
 		}
 
-		const { UploadId } = await this.s3.send(
-			new CreateMultipartUploadCommand({
-				Bucket: ref.bucket,
-				Key: ref.key,
-				ContentType: contentType,
-			}),
-		)
-		const file = await this.files().save(
-			this.files().create({
-				ownerId: owner.id,
-				key: ref.key,
-				contentType,
-				size: String(request.size),
-				uploadId: UploadId ?? null,
-			}),
-		)
-		const partSize = partSizeFor(request.size)
-		const partCount = partCountFor(request.size, partSize)
+		const intent = await this.intentFor(file)
 		this.logger.log(
-			`upload intent fileId=${file.id} key=${ref.key} multipart parts=${partCount}`,
+			intent.mode === 'multipart'
+				? `upload intent fileId=${file.id} key=${file.key} multipart parts=${intent.part_count}`
+				: `upload intent fileId=${file.id} key=${file.key} single`,
 		)
-		return {
-			id: file.id,
-			key: ref.key,
-			mode: 'multipart',
-			part_size: partSize,
-			part_count: partCount,
-			parts: await this.presignParts(file, range(partCount)),
-			expires_in: PART_URL_TTL_SECONDS,
-		}
+		return { intent, replay: false }
 	}
 
 	async uploadParts(
@@ -321,6 +357,77 @@ export class UploadsService {
 					PART_URL_TTL_SECONDS,
 				),
 			})),
+		)
+	}
+
+	private async intentFor(file: StoredFile): Promise<UploadIntent> {
+		if (!file.uploadId) {
+			return {
+				id: file.id,
+				key: file.key,
+				mode: 'single',
+				method: 'PUT',
+				url: await presignPut(
+					this.s3,
+					this.ref(file.key),
+					file.contentType,
+					PUT_URL_TTL_SECONDS,
+				),
+				headers: { 'Content-Type': file.contentType },
+				expires_in: PUT_URL_TTL_SECONDS,
+			}
+		}
+		const size = Number(file.size)
+		const partSize = partSizeFor(size)
+		const partCount = partCountFor(size, partSize)
+		return {
+			id: file.id,
+			key: file.key,
+			mode: 'multipart',
+			part_size: partSize,
+			part_count: partCount,
+			parts: await this.presignParts(file, range(partCount)),
+			expires_in: PART_URL_TTL_SECONDS,
+		}
+	}
+
+	private assertSameIntent(
+		file: StoredFile,
+		requestHash: string,
+		instance: string,
+	): void {
+		if (file.requestHash !== requestHash) {
+			throw idempotencyConflict(instance)
+		}
+	}
+
+	/** The loser of a raced insert must not leave its multipart open. */
+	private async abortMultipart(
+		key: string,
+		uploadId: string | null,
+	): Promise<void> {
+		if (!uploadId) {
+			return
+		}
+		try {
+			await this.s3.send(
+				new AbortMultipartUploadCommand({
+					Bucket: this.bucket,
+					Key: key,
+					UploadId: uploadId,
+				}),
+			)
+		} catch (err) {
+			if (statusOf(err) !== 404) {
+				throw err
+			}
+		}
+	}
+
+	private isUniqueViolation(err: unknown): boolean {
+		return (
+			err instanceof QueryFailedError &&
+			(err.driverError as { code?: string }).code === UNIQUE_VIOLATION
 		)
 	}
 

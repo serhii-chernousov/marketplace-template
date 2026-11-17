@@ -12,7 +12,11 @@ export interface DemoApp {
 	call: (
 		method: string,
 		path: string,
-		options?: { token?: string; body?: unknown },
+		options?: {
+			token?: string
+			body?: unknown
+			headers?: Record<string, string>
+		},
 	) => Promise<{ status: number; body: Record<string, unknown> }>
 }
 
@@ -44,12 +48,13 @@ export async function startDemoApp(port: number): Promise<DemoApp> {
 	return {
 		app,
 		dataSource: app.get(DataSource),
-		call: async (method, path, { token, body } = {}) => {
+		call: async (method, path, { token, body, headers } = {}) => {
 			const res = await fetch(`${baseUrl}${path}`, {
 				method,
 				headers: {
 					...(token ? { Authorization: `Bearer ${token}` } : {}),
 					...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+					...headers,
 				},
 				body: body === undefined ? undefined : JSON.stringify(body),
 			})

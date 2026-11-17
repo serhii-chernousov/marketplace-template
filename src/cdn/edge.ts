@@ -22,14 +22,19 @@ function send(
 	res: ServerResponse,
 	object: CachedObject,
 	cache: 'HIT' | 'MISS',
+	method: string,
 ) {
-	res
-		.writeHead(200, {
-			'Content-Type': object.contentType,
-			'Cache-Control': object.cacheControl,
-			'X-Cache': cache,
-		})
-		.end(object.body)
+	res.writeHead(200, {
+		'Content-Type': object.contentType,
+		'Cache-Control': object.cacheControl,
+		'Content-Length': object.body.byteLength,
+		'X-Cache': cache,
+	})
+	if (method === 'HEAD') {
+		res.end()
+		return
+	}
+	res.end(object.body)
 }
 
 /**
@@ -48,13 +53,18 @@ export function startEdge(
 		const key = decodeURIComponent(
 			new URL(req.url ?? '/', 'http://edge').pathname.slice(1),
 		)
-		if (req.method !== 'GET' || !key.startsWith(ASSET_PREFIX)) {
+		// HEAD is a cached GET with no body: same status and headers, including X-Cache.
+		const method = req.method ?? ''
+		if (
+			(method !== 'GET' && method !== 'HEAD') ||
+			!key.startsWith(ASSET_PREFIX)
+		) {
 			res.writeHead(404).end()
 			return
 		}
 		const cached = cache.get(key)
 		if (cached && cached.expiresAt > Date.now()) {
-			send(res, cached, 'HIT')
+			send(res, cached, 'HIT', method)
 			return
 		}
 		try {
@@ -72,7 +82,7 @@ export function startEdge(
 			if (ttl > 0) {
 				cache.set(key, object)
 			}
-			send(res, object, 'MISS')
+			send(res, object, 'MISS', method)
 		} catch (err) {
 			res
 				.writeHead(statusOf(err) === 404 ? 404 : 502, { 'X-Cache': 'MISS' })

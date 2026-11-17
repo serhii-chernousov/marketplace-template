@@ -79,9 +79,10 @@ runDemo(async () => {
 			body: { email: owner.email, password: owner.password },
 		})
 		const token = String(login.body.access_token)
-		const newIntent = (app: DemoApp) =>
+		const newIntent = (app: DemoApp, idempotencyKey: string) =>
 			app.call('POST', '/v1/uploads/intent', {
 				token,
+				headers: { 'Idempotency-Key': idempotencyKey },
 				body: {
 					filename: '../../etc/passwd',
 					content_type: CONTENT_TYPE,
@@ -89,7 +90,7 @@ runDemo(async () => {
 				},
 			})
 
-		const intent = await newIntent(first)
+		const intent = await newIntent(first, 'demo-upload-avatar')
 		const key = String(intent.body.key)
 		const url = String(intent.body.url)
 		const keyFromServer =
@@ -101,7 +102,7 @@ runDemo(async () => {
 			withKey(url, key, `uploads/${owner.id}/${randomUUID()}.png`),
 		)
 
-		const unfilled = await newIntent(first)
+		const unfilled = await newIntent(first, 'demo-upload-empty')
 		const commitWithoutBytes = await first.call(
 			'POST',
 			`/v1/uploads/${String(unfilled.body.id)}/commit`,

@@ -1,4 +1,14 @@
-import { Body, Controller, Get, HttpCode, Param, Post } from '@nestjs/common'
+import {
+	Body,
+	Controller,
+	Get,
+	Headers,
+	HttpCode,
+	Param,
+	Post,
+	Res,
+} from '@nestjs/common'
+import { Response } from 'express'
 import type { AuthUser } from '../auth/auth-user'
 import { CurrentUser } from '../auth/decorators'
 import { UploadsService, type UploadIntentRequest } from './uploads.service'
@@ -9,8 +19,22 @@ export class UploadsController {
 
 	@Post('intent')
 	@HttpCode(200)
-	intent(@CurrentUser() user: AuthUser, @Body() body: UploadIntentRequest) {
-		return this.uploads.createIntent(user, body, '/v1/uploads/intent')
+	async intent(
+		@CurrentUser() user: AuthUser,
+		@Headers('idempotency-key') idempotencyKey: string,
+		@Body() body: UploadIntentRequest,
+		@Res({ passthrough: true }) res: Response,
+	) {
+		const result = await this.uploads.createIntent(
+			user,
+			body,
+			'/v1/uploads/intent',
+			idempotencyKey,
+		)
+		if (result.replay) {
+			res.setHeader('Idempotency-Replay', 'true')
+		}
+		return result.intent
 	}
 
 	@Get(':id/parts')

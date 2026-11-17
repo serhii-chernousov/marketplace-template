@@ -26,3 +26,12 @@ export const uploadConflict = (detail: string, instance: string) =>
 		detail,
 		instance,
 	)
+
+export const idempotencyConflict = (instance: string) =>
+	new ProblemException(
+		422,
+		'https://marketplace.local/problems/idempotency-key-conflict',
+		'Idempotency key conflict',
+		'Same Idempotency-Key was reused with a different request body',
+		instance,
+	)

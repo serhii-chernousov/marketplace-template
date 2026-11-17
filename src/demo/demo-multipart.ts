@@ -77,6 +77,7 @@ runDemo(async () => {
 
 		const intent = await call('POST', '/v1/uploads/intent', {
 			token,
+			headers: { 'Idempotency-Key': 'demo-multipart-dump' },
 			body: {
 				filename: 'shop-dump.sql.gz',
 				content_type: 'application/gzip',

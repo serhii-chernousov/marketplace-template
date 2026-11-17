@@ -8,4 +8,13 @@ secrets
 .prettierignore
 .vscode
 *.tsbuildinfo
-task.log
+task.log.npm_token
+.pulumi
+.secrets
+infra
+k8s
+demo
+backups
+test
+pacts
+db

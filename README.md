@@ -1,8 +1,9 @@
-# Marketplace API (hw-26)
+# Marketplace API (hw-28)
 
 ## Ресурси
 
 - `POST /v1/auth/login`, `POST /v1/auth/refresh`, `POST /v1/auth/logout`, `GET /v1/auth/me` — JWT-автентифікація (див. [Auth](#auth))
+- `GET /healthz` (жив), `GET /readyz` (готовий приймати трафік) — проби Kubernetes (див. [Kubernetes](#kubernetes))
 - `GET/POST /v1/listings`, `GET/PATCH /v1/listings/{id}`
 - `GET /v1/products/{id}`, `POST /v1/products` — картка товару (публічна) і запис у каталог (seller/admin)
 - `GET/POST /v1/orders`, `GET /v1/orders/{id}` — create йде в Postgres через `CheckoutService`, get за id читає рядок `orders`
@@ -200,7 +201,7 @@ TypeORM CLI (`src/database/data-source.ts`) читає `DB_HOST`, `DB_PORT`, `DB
 | `DB_USER`         | так                | Роль застосунку (`app_user`) або `admin` для CLI грейдера                   |
 | `DB_PASSWORD`     | так                | Пароль для TypeORM DataSource (`migrate` / `seed` / `demo` / `report`)      |
 | `DB_NAME`         | так                | Ім'я бази (`shop`)                                                          |
-| `DB_URL`          | так                | Рядок підключення Nest; джерело — сховище                                   |
+| `DB_URL`          | так                | Рядок підключення Nest; джерело — Infisical                                 |
 | `BROKER_URL`      | так                | AMQP URL RabbitMQ (`amqp://…@host:5672`); у Infisical `dev` поруч із `DB_*` |
 | `REDIS_URL`       | так                | Redis-кеш (`allkeys-lru`)                                                   |
 | `REDIS_QUEUE_URL` | так                | Redis без витіснення: черга, сесії, ліміт, денилист токенів                 |
@@ -454,15 +455,15 @@ Cache-aside стоїть на читанні картки товару `GET /v1/
 
 ### Змінні
 
-| Змінна                  | Джерело                                 | Навіщо                                                                          |
-| ----------------------- | --------------------------------------- | ------------------------------------------------------------------------------- |
-| `JWT_PRIVATE_KEY`       | сховище (#11), Infisical `dev` / `prod` | підпис access-токенів: base64 від PKCS#8 PEM, EC P-256                          |
-| `JWT_PUBLIC_KEY`        | сховище (#11), Infisical `dev` / `prod` | перевірка підпису: base64 від SPKI PEM тієї ж пари                              |
-| `JWT_KID`               | сховище (#11), Infisical `dev` / `prod` | `kid` у заголовку токена; міняється з кожною ротацією ключа                     |
-| `JWT_EXTRA_PUBLIC_KEYS` | сховище (#11), лише на час ротації      | інші ключі перевірки: `kid:<base64 SPKI PEM>` через кому; поза ротацією порожня |
-| `REFRESH_TOKEN_PEPPER`  | сховище (#11), Infisical `dev` / `prod` | ключ HMAC для `refresh_tokens.token_hash`, ≥ 32 символи                         |
-| `DB_HOST` … `DB_NAME`   | compose / оточення                      | дев-креденшели Postgres                                                         |
-| `REDIS_QUEUE_URL`       | compose / оточення                      | noeviction-Redis: денилист, сесії, ліміт                                        |
+| Змінна                  | Джерело                                   | Навіщо                                                                          |
+| ----------------------- | ----------------------------------------- | ------------------------------------------------------------------------------- |
+| `JWT_PRIVATE_KEY`       | Infisical (#11), Infisical `dev` / `prod` | підпис access-токенів: base64 від PKCS#8 PEM, EC P-256                          |
+| `JWT_PUBLIC_KEY`        | Infisical (#11), Infisical `dev` / `prod` | перевірка підпису: base64 від SPKI PEM тієї ж пари                              |
+| `JWT_KID`               | Infisical (#11), Infisical `dev` / `prod` | `kid` у заголовку токена; міняється з кожною ротацією ключа                     |
+| `JWT_EXTRA_PUBLIC_KEYS` | Infisical (#11), лише на час ротації      | інші ключі перевірки: `kid:<base64 SPKI PEM>` через кому; поза ротацією порожня |
+| `REFRESH_TOKEN_PEPPER`  | Infisical (#11), Infisical `dev` / `prod` | ключ HMAC для `refresh_tokens.token_hash`, ≥ 32 символи                         |
+| `DB_HOST` … `DB_NAME`   | compose / оточення                        | дев-креденшели Postgres                                                         |
+| `REDIS_QUEUE_URL`       | compose / оточення                        | noeviction-Redis: денилист, сесії, ліміт                                        |
 
 Жодна з чотирьох змінних сховища не має дефолту в Zod-схемі: дефолт для ключа — це ключ, закомічений у git. Ціна витоку тут інша, ніж у `DB_URL`: рядок підключення дає доступ до бази з мережі, а ключ підпису дає змогу виписати собі токен будь-кого, не маючи жодного доступу. Конфіг валідується в `ConfigModule.forRoot` — до `DataSource.initialize()`, тому голий `npm run start` без ключів падає з `exit 1` і називає змінні (`JWT_PRIVATE_KEY: Invalid input…`), а не `ECONNREFUSED`. Схема також перевіряє, що ключі розбираються, що це P-256 і що публічний ключ — пара приватному. `npm run start:vault` і всі `demo:*` йдуть через `bash scripts/with-secrets.sh dev …`. Воркер черги (`start:worker`) валідує лише базову схему: ключа підпису він не тримає.
 
@@ -547,14 +548,14 @@ Refresh-токен — рядок у базі: щоб убити його, до�
 
 ### Змінні
 
-| Змінна                                    | Джерело                                               | Навіщо                                                                     |
-| ----------------------------------------- | ----------------------------------------------------- | -------------------------------------------------------------------------- |
-| `STORAGE_ACCESS_KEY`                      | тільки сховище (#11), Infisical `dev` / `prod`        | ключ доступу до сховища                                                    |
-| `STORAGE_SECRET_KEY`                      | тільки сховище (#11), Infisical `dev` / `prod`        | секрет до ключа; без дефолту в Zod-схемі                                   |
-| `STORAGE_ENDPOINT`                        | сховище (#11), Infisical `dev`; у грейдера — `export` | адреса S3 API; порожньо → справжній AWS S3                                 |
-| `STORAGE_REGION`                          | сховище (#11), Infisical `dev` / `prod`               | регіон підпису SigV4 (`us-east-1` для MinIO)                               |
-| `STORAGE_BUCKET`                          | сховище (#11), Infisical `dev` / `prod`               | приватний бакет: і `uploads/`, і `assets/`                                 |
-| `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` | `docker-compose.yaml` (дефолти дев-стенда)            | креденшели локального MinIO; секретом не є, як і пароль Postgres у compose |
+| Змінна                                    | Джерело                                                 | Навіщо                                                                     |
+| ----------------------------------------- | ------------------------------------------------------- | -------------------------------------------------------------------------- |
+| `STORAGE_ACCESS_KEY`                      | тільки Infisical (#11), Infisical `dev` / `prod`        | ключ доступу до S3                                                         |
+| `STORAGE_SECRET_KEY`                      | тільки Infisical (#11), Infisical `dev` / `prod`        | секрет до ключа; без дефолту в Zod-схемі                                   |
+| `STORAGE_ENDPOINT`                        | Infisical (#11), Infisical `dev`; у грейдера — `export` | адреса S3 API; порожньо → справжній AWS S3                                 |
+| `STORAGE_REGION`                          | Infisical (#11), Infisical `dev` / `prod`               | регіон підпису SigV4 (`us-east-1` для MinIO)                               |
+| `STORAGE_BUCKET`                          | Infisical (#11), Infisical `dev` / `prod`               | приватний бакет: і `uploads/`, і `assets/`                                 |
+| `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` | `docker-compose.yaml` (дефолти дев-стенда)              | креденшели локального MinIO; секретом не є, як і пароль Postgres у compose |
 
 Нових env-файлів немає: значення живуть у Infisical `dev`, а `demo:upload`, `demo:multipart`, `demo:cdn` ідуть через `bash scripts/with-secrets.sh dev …` — так само, як `migrate` / `seed`. Схема `storageEnvSchema` (`src/config/env.schema.ts`) не має дефолтів для ключів. Ціна витоку тут інша, ніж у `DB_URL`: ключ сховища — це право читати й писати всі файли всіх користувачів з будь-якої точки інтернету, а приватний ключ підпису CDN (якщо дійде до signed URL, див. нижче) — право видати собі доступ до всього приватного контенту дистрибуції.
 
@@ -684,7 +685,222 @@ no-cache-control-hit=0
 
 `api-alive=0` + `put-offline=200` — байти доїхали, поки застосунок був вимкнений, і їх ніс процес без жодного ключа (`offline-credential-vars=0`); проксі через бекенд дав би тут `0`. `commit-without-bytes=409` — без `HeadObject` було б `200`. `resumed-parts=1` — без `ListParts` другий процес залив би всі `3`. `direct=403` + `cache-hit=1` — бакет закритий для публіки й відкритий для кеша; `new-name=1` + `content-changed=1` — оновлення новим URL, а не інвалідацією; мутабельне `app.css` дало б `0` і `0`.
 
+## Kubernetes
+
+Курсовий живе в локальному одновузловому кластері як справжній деплой: API (`dist/main.js`), воркер черги (`dist/worker.js`), міграції та всі залежності — Postgres, два Redis, RabbitMQ і MinIO. Усе, що їде в кластер, описують дві типізовані Pulumi-програми в `infra/`; руками нічого не застосовується.
+
+**На чому підіймав:** kind v0.33.0 (вузол Kubernetes v1.37.0), Docker Desktop із 7,65 ГіБ памʼяті. Після деплою весь кластер разом із даними й застосунком займає ~1,5 ГіБ (`docker stats --no-stream hw28-control-plane`). Мінімум для прогону — 4 ГіБ у Docker.
+
+### Ресурси
+
+| Що                                                       | Де                                                                                               |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| Namespace застосунку                                     | `marketplace`                                                                                    |
+| API: Deployment / Service (NodePort `30080`) / PDB / HPA | `marketplace-api`                                                                                |
+| Воркер черги                                             | Deployment `marketplace-worker`                                                                  |
+| Міграції                                                 | Job `migrate-*` (нове імʼя на кожен деплой)                                                      |
+| Секрет рантайму / несекретний конфіг                     | Secret `marketplace-api-secrets-<hash>` / ConfigMap `marketplace-api-config-<hash>` (авто-імена) |
+| Сервіси даних                                            | namespace `marketplace-data`: `postgres`, `redis-cache`, `redis-queue`, `rabbitmq`, `minio`      |
+
+### Два стеки — два життєві цикли
+
+|                         | platform (`infra/platform/`)                                              | app (`infra/`)                                        |
+| ----------------------- | ------------------------------------------------------------------------- | ----------------------------------------------------- |
+| Що                      | Postgres, redis-cache, redis-queue, RabbitMQ, MinIO, Job створення бакета | Secret, ConfigMap, migrate Job, API, воркер, PDB, HPA |
+| Як часто                | рідко: версія або конфіг сервісу даних                                    | кожен коміт                                           |
+| Аналог у хмарі (ДЗ #31) | RDS, ElastiCache, Amazon MQ, S3                                           | EKS                                                   |
+
+App-стек читає адреси через `pulumi.StackReference` і нічого не хардкодить. Деплой застосунку ніколи не перезапускає базу чи брокер: випадковий diff у StatefulSet Redis не може приїхати разом зі зміною в коді.
+
+### Конвеєр одного деплою
+
+`npm run up` → `scripts/deploy.sh`:
+
+1. platform up — ідемпотентний; якщо сервіси даних не змінювались, це no-op.
+2. app up: Secret → **migrate Job** (старі поди ще обслуговують трафік) → **rolling update API** → **rolling update воркера**. Pulumi чекає `Complete` у Job, і лише потім чіпає Deployment (`dependsOn`).
+3. smoke: `GET /health` через Service має бути `200`. Не `/readyz`: одразу після rollout старий под, що дренується, навмисно відповідає на нього 503, хоча сервіс загалом працює.
+
+Будь-який крок упав — наступні не виконуються, у проді лишається попередня версія. Тег образу — git sha (плюс хеш вмісту, поки є незакомічені зміни у вхідних файлах образу); відкат — `pulumi config set image <попередній тег>` + `up`.
+
+### Змінні
+
+| Змінна                     | Джерело                        | Навіщо                                                                                      |
+| -------------------------- | ------------------------------ | ------------------------------------------------------------------------------------------- |
+| `DB_PASSWORD`              | сховище (#11), Infisical `dev` | пароль Postgres; платформа ставить його ролі, застосунок і migrate Job беруть із K8s Secret |
+| `REDIS_PASSWORD`           | сховище (#11), Infisical `dev` | `requirepass` обох Redis; Pulumi збирає з нього `REDIS_URL` / `REDIS_QUEUE_URL`             |
+| `BROKER_PASSWORD`          | сховище (#11), Infisical `dev` | користувач RabbitMQ `app`; Pulumi збирає `BROKER_URL`                                       |
+| `STORAGE_ACCESS_KEY`       | сховище (#11), Infisical `dev` | ключ S3 API (MinIO)                                                                         |
+| `STORAGE_SECRET_KEY`       | сховище (#11), Infisical `dev` | секрет до ключа S3 API                                                                      |
+| `JWT_PRIVATE_KEY`          | сховище (#11), Infisical `dev` | підпис access-токенів (base64 PKCS#8 PEM, P-256)                                            |
+| `JWT_PUBLIC_KEY`           | сховище (#11), Infisical `dev` | перевірка підпису (base64 SPKI PEM)                                                         |
+| `JWT_KID`                  | сховище (#11), Infisical `dev` | `kid` поточного ключа                                                                       |
+| `REFRESH_TOKEN_PEPPER`     | сховище (#11), Infisical `dev` | HMAC-перець refresh-токенів                                                                 |
+| `PULUMI_CONFIG_PASSPHRASE` | сховище (#11), Infisical `dev` | ключ шифрування стану Pulumi                                                                |
+| `PULUMI_BACKEND_URL`       | `export`, не секрет            | локальний файловий бекенд (`file://$PWD/.pulumi`)                                           |
+| `JWT_EXTRA_PUBLIC_KEYS`    | Infisical, лише на час ротації | пробрасується в Secret, якщо задана                                                         |
+
+Значення приїжджають у програму через `scripts/with-secrets.sh` (з `SKIP_VAULT=1` — з оточення). Першою дією обидві програми перевіряють оточення і падають з іменем змінної (`missing required env: DB_PASSWORD`) — ще до `StackReference` і будь-якого звернення до кластера. Дефолтів немає. Deployment бачить секрети лише через `envFrom.secretRef`; адреси сервісів (`DB_HOST`, `STORAGE_ENDPOINT`…) не секретні й лежать у ConfigMap. Secret пишеться через `data` + base64, а не `stringData`: друге `npm run up` поспіль дає `unchanged`.
+
+**Ротація секрету.** Провайдер Kubernetes вважає Secret і ConfigMap незмінними: нове значення означає заміну ресурсу. З фіксованим імʼям це delete + create, і слідом пересоздавались обидва Deployment — тобто даунтайм на кожній ротації (так і було в першій версії). Тепер у них авто-імена: новий Secret створюється до видалення старого, нове імʼя потрапляє в шаблон пода, і Deployment отримує звичайний rolling update. Перевірено: деплой із новою парою JWT-ключів і новим перцем під навантаженням — 6304 запити, `failed=0`.
+
+`Pulumi.dev.yaml` у `.gitignore`: у ньому `encryptionsalt`, привʼязаний до конкретної парольної фрази, і з чужим файлом грейдер отримав би «incorrect passphrase». Дефолти конфігу (`profile`, `rev`) лежать у `Pulumi.yaml`. `pulumi refresh` на app-стеку не робити: він зʼїдає Secret зі стану, наступний `up` падає з `already exists`.
+
+### Образ
+
+`docker/Dockerfile` — чотири стадії: `deps` → `build` → `prod-deps` → `runtime` на `gcr.io/distroless/nodejs22-debian12:nonroot`. Shell у фінальному образі немає, процес — uid 65532. Один образ запускає три процеси: API (`CMD`), воркер і міграції (Pulumi перевизначає `args`).
+
+Токен приватного реєстру — файл-приманка `.npm_token` (у git немає), лише через `RUN --mount=type=secret`. Токен привʼязаний до фіктивного scope `@marketplace-private`, тож npm нікуди його не шле. `.npmrc` створюється й видаляється в одному `RUN`. `npm run demo:image` перевіряє три канали: `docker history`, `docker image inspect` і байти кожного шару з `docker save`. Перевірка детектора на навмисно дірявих збірках:
+
+| Варіант                                      | token-in-history | token-in-config | token-in-layers |
+| -------------------------------------------- | ---------------- | --------------- | --------------- |
+| `ARG NPM_TOKEN`                              | 2                | 0               | 0               |
+| `COPY .npm_token` + `RUN rm` наступним шаром | 0                | 0               | 1               |
+| `RUN --mount=type=secret` (наш)              | 0                | 0               | 0               |
+
+### Сканування
+
+`npm run scan` запускає Trivy в контейнері (`aquasec/trivy:0.65.0`, ставити нічого не треба), рахує знахідки `CRITICAL,HIGH` з доступним виправленням (`--ignore-unfixed`) і порівнює з `SCAN_MAX`. Сканер не запустився або звіт не розібрався → `gate=error`, exit 2: пропуску «за замовчуванням» немає. На момент здачі `found=18`: 7 у `libssl3` бази distroless, 11 у npm-залежностях (`body-parser`, `js-yaml`, `lodash`, `multer`…). Робочий поріг — 20, а не 0: база сканера оновлюється щодоби, і нульовий поріг ламав би збірку без жодної зміни в коді. Його ж використовує CI (`.github/workflows/image-scan.yml`), де до сканування ще проганяється `demo:image` з вимогою нуля витоків.
+
+### Проби й SIGTERM
+
+- `startupProbe` → `/healthz` (1 с × 60): поки старт не завершився, liveness і readiness не працюють.
+- `readinessProbe` → `/readyz` (кожну 1 с, одна невдача — і под поза Service): «чи можна слати трафік». Відповідає лише за прапорцем процесу, у базу й Redis не ходить.
+- `livenessProbe` → `/healthz` (10 с × 3): «чи треба вбити». Інший шлях: тимчасово не готовий застосунок не повинен перезапускатись.
+
+Порядок старту: перевірка схеми (`showMigrations()` — якщо є невиконані міграції, под не стартує) → прогрів `WARMUP_MS=4000` → `listen()` → ready. На SIGTERM: `/readyz` → 503 → дренаж `DRAIN_MS=5000` (kube-proxy прибирає под з endpoints) → `app.close()` (через `SHUTDOWN_TIMEOUT_MS` примусово закриваються SSE і socket.io, які інакше тримали б сокет до SIGKILL) → Redis, TypeORM, AMQP. `terminationGracePeriodSeconds: 20` більший за дренаж плюс закриття. Обробник SIGTERM є в обох профілях: Node у distroless — PID 1, а PID 1 без обробника SIGTERM ігнорує.
+
+### Rolling update під навантаженням
+
+`npm run demo:rollout` міняє `rev` у шаблоні пода (і образ, якщо зібрано новий) і викочує його під навантаженням. `scripts/loadgen.mjs` б'є в `/health` з новим TCP-зʼєднанням на кожен запит і пише в файл код кожної відповіді (`000:<помилка>` — відповіді немає). Уся статистика рахується з цього файла. Ціль — `/health`, бо `/v1/products/:id` має `@RateLimit(120/хв)`, і його 429 рахувались би як збої. Темп обмежено ~250 rps: на macOS порти клієнта висять у TIME_WAIT ~30 с, і вище ~500 нових зʼєднань/с генератор сам вичерпав би порти.
+
+| Профіль                                                         | Прогонів | requests  | failed                                               | rollout-seconds |
+| --------------------------------------------------------------- | -------- | --------- | ---------------------------------------------------- | --------------- |
+| correct (`maxUnavailable: 0`, `maxSurge: 1`, проби, дренаж 5 с) | 7        | 6072–6240 | **0** у кожному                                      | 15–18           |
+| broken (без проб, `maxUnavailable: 1`, без дренажу)             | 5        | ≥ 6000    | 662–1778 (від ~11 до ~29 %; `ECONNRESET` і таймаути) | 5–6             |
+
+Частка збоїв зламаного профілю плаває від прогону до прогону, нуль коректного — ні. Коректний профіль викочується приблизно втричі довше — це ціна нуля: старий под не знімається, поки новий не сказав «готовий», і кожен старий под ще 5 с дренується. `PROFILE=broken npm run demo:rollout` після заміру повертає кластер у correct.
+
+### Міграції під час деплою
+
+- **Окремий Job до rollout, а не старт пода і не initContainer.** `typeorm migration:run` не бере advisory lock: при двох подах і `maxSurge: 1` міграцію запускали б кілька процесів одночасно. Job незмінний, тому новий `rev` чи образ = новий Job; якщо нових міграцій немає, це no-op за ~3 с (`migrate-seconds` у виводі демо).
+- **Expand → contract.** Під час rollout стара й нова версії коду працюють на вже новій схемі, тож міграція релізу N лише додає (nullable-колонка, таблиця, індекс `CONCURRENTLY`). Видалення чи перейменування — окремим пізнішим релізом, коли старого коду вже немає. Відкат коду безпечний саме тому, що схема зворотно сумісна; на `migration:revert` у проді не спираємось.
+- **Без блокувань.** `migrationsTransactionMode: 'each'`, щоб окрема міграція могла вийти з транзакції (`transaction = false`) заради `CREATE INDEX CONCURRENTLY`, плюс `SET lock_timeout`.
+
+Перевірено на двох сценаріях:
+
+| Сценарій                                                                                            | Що сталось                                                             | requests / failed |
+| --------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- | ----------------- |
+| Нова міграція `AddProductsSlug` (колонка `slug` + унікальний індекс `CONCURRENTLY`) у новому образі | Job застосував її під навантаженням (8 → 9 міграцій), далі rollout     | 6120 / **0**      |
+| Образ із навмисно зламаною міграцією                                                                | Job `Failed`, `pulumi up` exit 1, Deployment лишився на старому образі | 5344 / **0**      |
+
+### Зміни в Redis, RabbitMQ, S3
+
+Зміна буває трьох типів, і в кожної свій шлях.
+
+**Інфраструктурна** (версія чи конфіг Redis, `maxmemory-policy`, версія Postgres) — це platform-стек, окремий `npm run platform:up`, не частина деплою застосунку. У хмарі керований сервіс перемикається на репліку за секунди; локально StatefulSet просто перезапускається, і застосунок мусить це пережити. Кеш карток і rate limit працюють у режимі fail-open (помилка Redis → читання з Postgres / пропуск ліміту), readiness від Redis не залежить. `npm run demo:platform-blip` перезапускає обидва Redis під навантаженням:
+
+| Потік                                                   | requests  | failed |
+| ------------------------------------------------------- | --------- | ------ |
+| `/health` (~250 rps): чи лишаються поди в Service       | 3800–3960 | 0      |
+| картка товару з кешу Redis (1 rps): чи працює fail-open | 17        | 0      |
+| рестартів подів API                                     | —         | 0      |
+
+Шлях до нуля на картці — два виправлення в клієнті Redis, і обидва варто знати:
+
+1. Перший прогін дав 4 збої з 13 запитів. Fail-open спрацьовував, але ioredis чекав зʼєднання до дефолтних 10 с, і клієнт відвалювався раніше. Виправлення: `connectTimeout: 1000`, `commandTimeout: 500`.
+2. Далі лишались поодинокі таймаути: при лежачому Redis один запит робить три послідовні звернення (rate limit → кеш → лок), і кожне чекало в offline-черзі ioredis, поки йде переподключення. Виправлення: `enableOfflineQueue: false` — без зʼєднання команда падає одразу, і запит миттєво йде в Postgres. Клієнти ліниві (`lazyConnect` потрібен тестам), тому API і воркер підключаються явно на старті (`connectRedisClients`); Redis, лежачий на старті, не фатальний.
+
+Після обох — 0 збоїв у трьох прогонах поспіль. Fail-open без таймаутів — той самий даунтайм, тільки повільніший.
+
+**Зміна формату даних** — деплой застосунку за правилом expand → contract:
+
+| Сервіс         | Expand (реліз N)                                                                                                                                  | Contract (пізніше)                                                      |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| Postgres       | migrate Job до rollout, лише додаємо                                                                                                              | видалити старе, коли старого коду немає                                 |
+| Redis cache    | новий префікс ключа (`product-card:v2:`); старий код читає v1, новий — v2                                                                         | v1 зникає сам за TTL                                                    |
+| Redis sessions | новий код читає обидва формати, пише новий                                                                                                        | прибрати читання старого                                                |
+| BullMQ         | воркер вчиться читати новий payload раніше, ніж API почне його слати (поле `version`)                                                             | API переходить на новий формат, старий прибирається після дренажу черги |
+| RabbitMQ       | толерантний консюмер ігнорує невідомі поля; нові exchange і черги оголошуються ідемпотентно (`assertExchange` / `assertQueue`) до першого publish | старі binding і черги — окремим релізом                                 |
+| S3             | бакет або префікс створює платформа (Job `minio-bucket`), застосунок бакетів не створює                                                           | старі обʼєкти — lifecycle-правилом                                      |
+
+**Топологія** (нова черга, бакет, інстанс Redis): спершу платформа, потім застосунок починає цим користуватись. Ніколи навпаки.
+
+### PDB
+
+`minAvailable: 1` при двох репліках → `disruptionsAllowed=1`: вузол можна дренувати, але не обидва поди одразу. `npm run demo:pdb` викликає Eviction API через `kubectl proxy` і друкує справжні HTTP-коди: `evict-1=201`, `evict-2=429` (заміна першого пода ще прогрівається). `minAvailable == replicas` дав би `disruptionsAllowed=0` і заблокував би будь-який drain. Звичайний `kubectl delete pod` PDB не зупиняє: бюджет діє лише на Eviction API.
+
+### HPA і `replicas`
+
+HPA — `autoscaling/v2`, 2–5 реплік, CPU 70 %. У kind немає metrics-server, тому HPA показує `cpu: <unknown>/70%` і нічого не масштабує — саме тому `spec.replicas: 2` у програмі лишається. У бойовому кластері з metrics-server це конфлікт володіння полем: у `spec.replicas` пишуть і Pulumi (server-side apply), і контролер HPA. Кожен `pulumi up` або скидав би масштаб, який вибрав HPA, або падав би на конфлікті field manager. Там `replicas` треба прибрати з програми (або `ignoreChanges: ['spec.replicas']`), лишивши кількість реплік лише HPA.
+
+### Секрети: межі
+
+- **ESO / CSI.** У проді секрет не проходить через ноутбук розробника. External Secrets Operator за розкладом синхронізує Vault / Infisical / AWS Secrets Manager у K8s Secret; Secrets Store CSI Driver монтує секрет у под файлом напряму зі сховища (опційно синхронізуючи в Secret). Тут ту ж роль грає Pulumi з `with-secrets.sh`; оператор не ставимо.
+- **base64 — не шифрування.** Без `EncryptionConfiguration` значення лежить у etcd відкритим текстом. «Поклав у Secret» означає «прибрав із git», а не «зашифрував».
+- **Два різні секрети.** BuildKit-секрет живе лише під час `docker build` і захищає образ і реєстр; K8s Secret живе в рантаймі й захищає репозиторій. Жоден не замінює інший.
+
+### startupProbe (бонус)
+
+Без `startupProbe` до першого рестарту є `initialDelaySeconds + periodSeconds × failureThreshold` = 0 + 10 × 3 = **30 с**. Повільна міграція чи прогрів довше за це перетворюються на нескінченний цикл рестартів, а збільшений `initialDelaySeconds` сповільнює виявлення справжнього зависання назавжди. З `startupProbe` (1 с × 60) застосунок має **60 с** на старт. Типовий старт тут — ~5 с (з них 4 с прогріву). Щойно startup пройшов, він вимикається, і liveness знову реагує за 30 с.
+
+### Відомі обмеження
+
+- SSE-події й кімнати socket.io живуть у памʼяті процесу: з двома подами клієнт пода A не почує подію з пода B. Потрібні `@socket.io/redis-adapter` і події в Redis.
+- Outbox relay і `OrderPlacedConsumer` запускаються лише з демо; у проді це окремі Deployment (relay безпечний у кількох репліках завдяки `FOR UPDATE SKIP LOCKED`).
+- Спрощення платформи: `POSTGRES_USER` — суперкористувач (у проді — owner-роль для міграцій і DML-роль для рантайму), MinIO під root-ключем, без TLS. Postgres і RabbitMQ беруть пароль лише при першій ініціалізації тому: зміна значення на живому кластері лікується `npm run destroy && npm run cluster:down`.
+- `STORAGE_ENDPOINT` — внутрішня адреса MinIO, тож presigned URL, підписані в кластері, ззовні не відкриються; для них потрібен Ingress до MinIO.
+- `kind load docker-image` падає з `content digest … not found` на Docker зі сховищем образів containerd. `scripts/cluster-up.sh` тоді імпортує образ однієї платформи через `ctr`.
+
 ## Grading
+
+### ДЗ #28 — Kubernetes
+
+Потрібно: Docker (≥ 4 ГіБ памʼяті), kind, pulumi ≥ 3, kubectl, Node 22.
+
+```bash
+export SKIP_VAULT=1                              # у грейдера немає доступу до сховища
+export PULUMI_BACKEND_URL="file://$PWD/.pulumi"
+export PULUMI_CONFIG_PASSPHRASE=hw28-grading
+export DB_PASSWORD=grader-db-hw28
+export REDIS_PASSWORD=grader-redis-hw28
+export BROKER_PASSWORD=grader-amqp-hw28
+export STORAGE_ACCESS_KEY=grader-minio-hw28
+export STORAGE_SECRET_KEY=grader-minio-secret-hw28   # MinIO вимагає ≥ 8 символів
+
+# одноразова пара ES256 і перець, як у ДЗ #26
+node -e 'const {generateKeyPairSync}=require("node:crypto");
+const k=generateKeyPairSync("ec",{namedCurve:"P-256",
+  privateKeyEncoding:{type:"pkcs8",format:"pem"},
+  publicKeyEncoding:{type:"spki",format:"pem"}});
+const fs=require("node:fs");
+fs.writeFileSync("/tmp/priv.b64",Buffer.from(k.privateKey).toString("base64"));
+fs.writeFileSync("/tmp/pub.b64",Buffer.from(k.publicKey).toString("base64"));'
+export JWT_KID=grader-hw28-kid
+export JWT_PRIVATE_KEY="$(cat /tmp/priv.b64)"
+export JWT_PUBLIC_KEY="$(cat /tmp/pub.b64)"
+export REFRESH_TOKEN_PEPPER="$(node -e 'console.log(require("node:crypto").randomBytes(32).toString("base64url"))')"
+
+npm --prefix infra ci
+printf 'dummy-npm-token' > .npm_token   # секрет етапу збірки; у git його немає
+
+npm run image:build                      # docker/Dockerfile -> marketplace-api:<git sha>
+npm run cluster:up                       # kind create + kind load (застосунок і образи залежностей)
+npm run up                               # pulumi: platform -> secret -> migrate Job -> api -> worker -> smoke
+
+npm run demo:image
+SCAN_MAX=-1 npm run scan; echo "exit(max=-1)=$?"
+SCAN_MAX=99999 npm run scan; echo "exit(max=99999)=$?"
+npm run demo:rollout
+PROFILE=broken npm run demo:rollout      # контраст; після заміру кластер повертається в correct
+npm run demo:pdb
+npm run demo:platform-blip               # перезапуск Redis під навантаженням
+
+npm run destroy && npm run cluster:down
+```
+
+Імена для перевірок: namespace `marketplace`, deploy / pdb / hpa `marketplace-api`. Перший `npm run up` (з порожнім кластером) займає ~40 с, наступні — ~15 с.
+
+### Попередні ДЗ
 
 ```bash
 docker compose up -d --wait

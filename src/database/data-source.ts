@@ -17,4 +17,7 @@ export default new DataSource({
 	logging: false,
 	entities: [__dirname + '/../entities/*.js'],
 	migrations: [__dirname + '/../migrations/*.js'],
+	// Per-migration transactions let a migration opt out (CREATE INDEX CONCURRENTLY)
+	// and keep the ones that already succeeded if a later one fails.
+	migrationsTransactionMode: 'each',
 })

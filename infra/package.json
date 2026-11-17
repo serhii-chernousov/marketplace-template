@@ -1,0 +1,17 @@
+{
+  "name": "marketplace-infra",
+  "private": true,
+  "description": "Pulumi programs: platform (data services) and app (API, worker, migrations)",
+  "main": "index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@pulumi/kubernetes": "4.34.3",
+    "@pulumi/pulumi": "3.276.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "typescript": "5.9.2"
+  }
+}

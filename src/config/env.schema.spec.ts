@@ -33,6 +33,13 @@ const AUTH_ENV = {
 	REFRESH_TOKEN_PEPPER: 'p'.repeat(32),
 }
 
+const STORAGE_ENV = {
+	STORAGE_REGION: 'us-east-1',
+	STORAGE_ACCESS_KEY: 'test',
+	STORAGE_SECRET_KEY: 'test',
+	STORAGE_BUCKET: 'test-files',
+}
+
 describe('env schema', () => {
 	it('requires BROKER_URL', () => {
 		expect(() => validateWorkerEnv(BASE_ENV)).toThrow(/BROKER_URL/)
@@ -62,13 +69,19 @@ describe('env schema', () => {
 				...BASE_ENV,
 				BROKER_URL: 'amqp://x',
 				...AUTH_ENV,
+				...STORAGE_ENV,
 				JWT_PUBLIC_KEY: p256Pair().publicKey,
 			}),
 		).toThrow(/JWT_PUBLIC_KEY: does not match JWT_PRIVATE_KEY/)
 	})
 
 	it('accepts overlap keys as kid:<base64 SPKI PEM> and rejects malformed ones', () => {
-		const env = { ...BASE_ENV, BROKER_URL: 'amqp://x', ...AUTH_ENV }
+		const env = {
+			...BASE_ENV,
+			BROKER_URL: 'amqp://x',
+			...AUTH_ENV,
+			...STORAGE_ENV,
+		}
 		expect(
 			validateApiEnv({
 				...env,
@@ -88,8 +101,24 @@ describe('env schema', () => {
 
 	it('accepts a matching P-256 pair', () => {
 		expect(
-			validateApiEnv({ ...BASE_ENV, BROKER_URL: 'amqp://x', ...AUTH_ENV })
-				.JWT_KID,
+			validateApiEnv({
+				...BASE_ENV,
+				BROKER_URL: 'amqp://x',
+				...AUTH_ENV,
+				...STORAGE_ENV,
+			}).JWT_KID,
 		).toBe('test')
+	})
+
+	it('names a missing storage key instead of falling back to a default', () => {
+		const { STORAGE_SECRET_KEY: _omitted, ...withoutSecret } = STORAGE_ENV
+		expect(() =>
+			validateApiEnv({
+				...BASE_ENV,
+				BROKER_URL: 'amqp://x',
+				...AUTH_ENV,
+				...withoutSecret,
+			}),
+		).toThrow(/STORAGE_SECRET_KEY/)
 	})
 })

@@ -87,5 +87,26 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+  minio:
+    # official minio/minio images are no longer public; pgsty/minio is a drop-in community build
+    image: pgsty/minio:RELEASE.2026-08-04T00-00-00Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-hw26user}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-hw26secretpass}
+    ports:
+      - '19000:9000'
+      - '19001:9001'
+    volumes:
+      # tmpfs: every `down` leaves a clean slate; below ~1g MinIO dies mid-series
+      - type: tmpfs
+        target: /data
+        tmpfs:
+          size: 1073741824
+    healthcheck:
+      test: ['CMD', 'mc', 'ready', 'local']
+      interval: 5s
+      timeout: 5s
+      retries: 12
 volumes:
   pgdata:

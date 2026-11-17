@@ -22,7 +22,9 @@ import { OrdersModule } from './orders/orders.module'
 import { RateLimitModule } from './ratelimit/ratelimit.module'
 import { RedisModule } from './redis/redis.module'
 import { SessionModule } from './session/session.module'
+import { StorageModule } from './storage/storage.module'
 import { StoreModule } from './store/store.module'
+import { UploadsModule } from './uploads/uploads.module'
 
 @Module({
 	imports: [
@@ -33,6 +35,7 @@ import { StoreModule } from './store/store.module'
 		}),
 		DatabaseModule,
 		RedisModule,
+		StorageModule,
 		AuthModule,
 		SessionModule,
 		RateLimitModule,
@@ -42,6 +45,7 @@ import { StoreModule } from './store/store.module'
 		ListingsModule,
 		OrdersModule,
 		CatalogModule,
+		UploadsModule,
 		HealthModule,
 	],
 	// AppModule is scanned before its imports, so these run before RateLimitGuard and it can key by req.user.

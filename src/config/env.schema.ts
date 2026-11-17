@@ -25,8 +25,18 @@ export const authEnvSchema = z.object({
 	REFRESH_TOKEN_PEPPER: z.string().min(32),
 })
 
+/** Empty STORAGE_ENDPOINT means real AWS S3. */
+export const storageEnvSchema = z.object({
+	STORAGE_ENDPOINT: z.string().optional(),
+	STORAGE_REGION: z.string().min(1),
+	STORAGE_ACCESS_KEY: z.string().min(1),
+	STORAGE_SECRET_KEY: z.string().min(1),
+	STORAGE_BUCKET: z.string().min(1),
+})
+
 const apiEnvSchema = envSchema
 	.extend(authEnvSchema.shape)
+	.extend(storageEnvSchema.shape)
 	.superRefine((env, ctx) => {
 		const problem = signingKeyPairProblem(
 			env.JWT_PRIVATE_KEY,
@@ -57,6 +67,7 @@ const apiEnvSchema = envSchema
 
 export type Env = z.infer<typeof envSchema>
 export type ApiEnv = z.infer<typeof apiEnvSchema>
+export type StorageEnv = z.infer<typeof storageEnvSchema>
 
 function parseEnv<S extends z.ZodType>(
 	schema: S,

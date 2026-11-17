@@ -4,6 +4,7 @@ import { OrderItem } from '../entities/order-item.entity'
 import { Order } from '../entities/order.entity'
 import { Product } from '../entities/product.entity'
 import { RefreshToken } from '../entities/refresh-token.entity'
+import { StoredFile } from '../entities/stored-file.entity'
 import { User } from '../entities/user.entity'
 
 /** Shared TypeORM entity list for Nest DatabaseModule and test DataSources. */
@@ -15,4 +16,5 @@ export const TYPEORM_ENTITIES = [
 	OrderItem,
 	Job,
 	RefreshToken,
+	StoredFile,
 ]

@@ -14,10 +14,17 @@ import type { AuthUser } from '../auth/auth-user'
 import { CurrentUser, Roles } from '../auth/decorators'
 import { RateLimit } from '../ratelimit/rate-limit.decorator'
 import { OrdersService } from './orders.service'
+import { FaultInjection } from '../common/fault-injection'
+import { logger } from '../observability/logger'
+
+const log = logger.child({ layer: 'orders.controller' })
 
 @Controller('v1/orders')
 export class OrdersController {
-	constructor(private readonly orders: OrdersService) {}
+	constructor(
+		private readonly orders: OrdersService,
+		private readonly faults: FaultInjection,
+	) {}
 
 	@Get()
 	list(
@@ -37,8 +44,16 @@ export class OrdersController {
 		@Headers('idempotency-key') idempotencyKey: string,
 		@Body() body: { items: Array<{ listing_id: string; quantity: number }> },
 		@Res({ passthrough: true }) res: Response,
+		@Headers('x-fault') fail?: string,
+		@Headers('x-fault-delay-ms') delay?: string,
 	) {
-		const result = await this.orders.create(user, idempotencyKey, body)
+		log.info('create order')
+		const result = await this.orders.create(
+			user,
+			idempotencyKey,
+			body,
+			this.faults.read(fail, delay),
+		)
 		res.setHeader('Location', result.location)
 		if (result.replay) {
 			res.setHeader('Idempotency-Replay', 'true')
@@ -47,7 +62,13 @@ export class OrdersController {
 	}
 
 	@Get(':id')
-	getById(@Param('id') id: string, @CurrentUser() user: AuthUser) {
-		return this.orders.getById(id, user)
+	getById(
+		@Param('id') id: string,
+		@CurrentUser() user: AuthUser,
+		@Headers('x-fault') fail?: string,
+		@Headers('x-fault-delay-ms') delay?: string,
+	) {
+		log.info({ orderId: id }, 'get order')
+		return this.orders.getById(id, user, this.faults.read(fail, delay))
 	}
 }

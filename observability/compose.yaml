@@ -1,0 +1,54 @@
+# Стенд спостережуваності: метрики (Prometheus), трейси (Jaeger), дашборд (Grafana).
+# Підключений у кореневий docker-compose.yaml через include, тож
+# `docker compose up -d --wait` з кореня піднімає його разом з усім іншим.
+services:
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=1d
+    ports:
+      - '22901:9090'
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:9090/-/ready']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  jaeger:
+    image: jaegertracing/jaeger:2.8.0
+    ports:
+      - '22918:4318' # OTLP/HTTP
+      - '22904:16686' # UI + /api/traces
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:13133/status']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  grafana:
+    image: grafana/grafana:12.1.1
+    depends_on:
+      prometheus:
+        condition: service_healthy
+      jaeger:
+        condition: service_healthy
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: 'false'
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/red.json
+    ports:
+      - '22900:3000'
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:3000/api/health']
+      interval: 5s
+      timeout: 3s
+      retries: 30

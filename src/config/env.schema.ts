@@ -17,6 +17,9 @@ export const envSchema = z.object({
 	WARMUP_MS: z.coerce.number().int().min(0).default(0),
 	DRAIN_MS: z.coerce.number().int().min(0).default(0),
 	SHUTDOWN_TIMEOUT_MS: z.coerce.number().int().min(0).default(5000),
+	OTEL_EXPORTER_OTLP_ENDPOINT: z.url().optional(),
+	OTEL_SERVICE_NAME: z.string().min(1).default('marketplace-api'),
+	FAULT_INJECTION: z.enum(['0', '1']).default('0'),
 })
 
 /** No defaults on purpose: a default signing key is a key committed to git. */

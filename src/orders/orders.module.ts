@@ -6,11 +6,19 @@ import { OrderEventsService } from './order-events.service'
 import { OrdersController } from './orders.controller'
 import { OrdersGateway } from './orders.gateway'
 import { OrdersService } from './orders.service'
+import { OrderRepository } from './order.repository'
+import { FaultInjection } from '../common/fault-injection'
 
 @Module({
 	imports: [CheckoutModule, QueueModule],
 	controllers: [OrdersController, OrderEventsController],
-	providers: [OrdersService, OrderEventsService, OrdersGateway],
+	providers: [
+		OrdersService,
+		OrderRepository,
+		FaultInjection,
+		OrderEventsService,
+		OrdersGateway,
+	],
 	exports: [OrdersService, OrderEventsService],
 })
 export class OrdersModule {}

@@ -851,7 +851,164 @@ HPA — `autoscaling/v2`, 2–5 реплік, CPU 70 %. У kind немає metri
 - `STORAGE_ENDPOINT` — внутрішня адреса MinIO, тож presigned URL, підписані в кластері, ззовні не відкриються; для них потрібен Ingress до MinIO.
 - `kind load docker-image` падає з `content digest … not found` на Docker зі сховищем образів containerd. `scripts/cluster-up.sh` тоді імпортує образ однієї платформи через `ctr`.
 
+## Observability
+
+Питання розділу: «о 03:15 один запит віддав 500 — що сталося?». Відповідь шукаємо за одним ключем. `trace_id` активного спана OpenTelemetry є в кожному рядку логу, у спані в Jaeger і в заголовку `traceparent`, з яким запит прийшов. Метрики RED показують, коли й на якому маршруті почалося.
+
+### Як це влаштовано
+
+- **OpenTelemetry**: [`src/observability/otel.ts`](src/observability/otel.ts) — **перший імпорт** `main.ts` і `worker.ts`. Автоінструментування патчить `http`, `express`, `pg`, `ioredis` у момент `require`, тому все, що завантажилось раніше, лишилось би без спанів. Вхідний `traceparent` продовжується (W3C Trace Context, `parentbased_always_on`). Серверний спан відповіді 5xx отримує статус `ERROR` (на 4xx лишається `Unset`), а [`ProblemExceptionFilter`](src/filters/problem-exception.filter.ts) додає в спан `recordException` і пише рядок `request failed`. Без `OTEL_EXPORTER_OTLP_ENDPOINT` SDK не стартує. На SIGTERM `shutdownTelemetry()` скидає батч спанів.
+- **Контекст запиту**: [`request-context.ts`](src/observability/request-context.ts) — `AsyncLocalStorage` з `tenant` (заголовок `x-tenant-id`, типово `public`: окремих тенантів у домені немає), `idempotencyKey` (заголовок `Idempotency-Key`, ДЗ #22) і `userId` (його ставить `JwtAuthGuard` після перевірки токена, ДЗ #24). `trace_id` в ALS **не лежить**: його єдине джерело — активний спан.
+- **Логи**: [`logger.ts`](src/observability/logger.ts) — pino, один JSON на рядок у stdout. `mixin` додає в кожен рядок `trace_id`, `span_id`, `userId`, `tenant` і `idempotencyKey`. Жодна функція не приймає `req` заради логування. Шари — модульні `logger.child({ layer })`: `orders.controller` → `orders.service` → `orders.repo` ([`OrderRepository`](src/orders/order.repository.ts)) / `checkout.repo`, плюс `http` (access-log) і `nest` (логи самого Nest через [`PinoNestLogger`](src/observability/nest-logger.ts)). Усі `console.*` у рантаймі замінені логером, тож не-JSON рядків у stdout немає.
+- **Redaction**: `redact` ховає лише ті шляхи, які в ньому описані: `*.password` покриває один рівень вкладеності, і `{ user: { credentials: { password } } }` протече. Тому тіла запитів не логуються взагалі, а заголовки `authorization`, `cookie` та `x-session-id` ховаються явними шляхами. Обидва випадки зафіксовані в [`logger.spec.ts`](src/observability/logger.spec.ts).
+- **Метрики**: [`metrics.ts`](src/observability/metrics.ts) і [`http-observability.ts`](src/observability/http-observability.ts) — Express-middleware, а не interceptor. Він стоїть перед пайплайном Nest і бачить також відповіді гардів (401/403/429) та OpenAPI-валідатора (400/405). `route` — це шаблон: `req.route.path`, якщо обробник знайдено, інакше шаблон зі специфікації (`req.openapi.openApiRoute`), інакше `unmatched`. Сирого шляху там не буває ніколи. `status` — справжній HTTP-код. `GET /metrics` — `@Public()`, виключений з OpenAPI-валідатора.
+- **Детермінований 5xx для демо**: [`FaultInjection`](src/common/fault-injection.ts). Він вимкнений, поки не задано `FAULT_INJECTION=1`. З ним заголовок `x-fault: 500` на `POST /v1/orders` вмикає вже наявний `failAfterOutbox`: транзакція checkout падає після справжніх SQL і відкочується. На `GET /v1/orders/:id` той самий заголовок кидає помилку після запиту до бази. `x-fault-delay-ms` (≤ 3000) робить повільну відповідь.
+
+### Змінні
+
+| Змінна                                          | Хто читає                                                  | Джерело                                                                                                                  |
+| ----------------------------------------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `OTEL_EXPORTER_OTLP_ENDPOINT`                   | застосунок (`otel.ts`)                                     | Infisical `dev` через `scripts/with-secrets.sh`; у грейдера — `export` (`http://127.0.0.1:22918`)                        |
+| `OTEL_SERVICE_NAME`                             | застосунок                                                 | дефолт у zod-схемі (`marketplace-api`)                                                                                   |
+| `FAULT_INJECTION`                               | застосунок                                                 | дефолт `0`; демо запускають застосунок з `1`                                                                             |
+| `LOG_LEVEL`                                     | логер                                                      | дефолт `info`; демо запускають з `debug` (рядки шарів пишуться на `debug`)                                               |
+| `PROMETHEUS_URL`                                | `demo:metrics` (інформаційний ключ `prometheus-target-up`) | Infisical `dev`; у грейдера — `export` (`http://127.0.0.1:22901`)                                                        |
+| `TRACE_API_URL`                                 | `demo:trace` (Jaeger `/api/traces/<id>`)                   | Infisical `dev`; у грейдера — `export` (`http://127.0.0.1:22904`)                                                        |
+| `GRAFANA_ADMIN_USER` / `GRAFANA_ADMIN_PASSWORD` | Grafana в `observability/compose.yaml`                     | Infisical `dev` (`bash scripts/with-secrets.sh dev docker compose up -d --wait`); без сховища — дефолт `admin` / `admin` |
+
+Нових env-файлів немає. Змінні застосунку додані в zod-схему й `.env.example` (`npm run check:env`).
+
+### Стенд
+
+[`observability/compose.yaml`](observability/compose.yaml) підключений у кореневий `docker-compose.yaml` через `include`, тож `docker compose up -d --wait` з кореня піднімає його разом з усім іншим.
+
+| Сервіс         | Порт                                              | Що там                                                                                                                                    |
+| -------------- | ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| Grafana 12.1   | `22900`                                           | дашборд «Marketplace API — RED». Датасорси Prometheus і Jaeger провіжаться з [`grafana/provisioning`](observability/grafana/provisioning) |
+| Prometheus 3.5 | `22901`                                           | скрейпить `host.docker.internal:3000` (`npm start`) і порти демо `3411–3413` кожні 5 с                                                    |
+| Jaeger 2.8     | `22918` → OTLP/HTTP, `22904` → UI і `/api/traces` | in-memory сховище трейсів                                                                                                                 |
+
+`docker stats --no-stream` до і після підняття стенда (Docker Desktop, 7,65 GiB):
+
+|                                                                                     | Пам'ять         |
+| ----------------------------------------------------------------------------------- | --------------- |
+| До: 7 контейнерів курсового (db, pgbouncer, rabbitmq, 2× redis, minio, pact-broker) | ≈ 549 MiB       |
+| Стенд: Grafana 129,3 MiB + Prometheus 21,9 MiB + Jaeger 13,6 MiB                    | **+ 164,8 MiB** |
+| Після                                                                               | ≈ 714 MiB       |
+
+`up -d --wait` для стенда зайняв 12 с. Годинники хоста й контейнера збігаються (`date +%s` = `docker run --rm alpine date +%s`). Стенд лишає великий запас до ліміту Docker разом із kind-кластером з ДЗ #28.
+
+### Дашборд: три питання RED
+
+Файл [`observability/grafana/dashboards/red.json`](observability/grafana/dashboards/red.json). Вікно `[1m]`, бо демо триває хвилину, а `[5m]` розмазав би сплеск.
+
+| Панель   | Питання                            | PromQL                                                                                                             |
+| -------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| Rate     | Скільки запитів за секунду і куди? | `sum by (route) (rate(http_requests_total{route!="/metrics"}[1m]))`                                                |
+| Errors   | Яка частка відповідей — 5xx?       | `sum by (route) (rate(http_requests_total{status=~"5.."}[1m])) / sum by (route) (rate(http_requests_total[1m]))`   |
+| Duration | Скільки чекає 95 % запитів?        | `histogram_quantile(0.95, sum by (le, route) (rate(http_request_duration_seconds_bucket{route!="/metrics"}[1m])))` |
+
+### Бакети гістограми
+
+`0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10` секунд.
+
+- Нижня частина (5–100 мс) — це звичайні запити: `GET /v1/orders/:id` має p95 ≈ 21 мс.
+- Середня (0,25–2,5 с) — повільні шляхи: checkout із ретраями `withRetry`, демо-затримки 1,5 і 2,5 с.
+- Верхній скінченний `le=10` = 2 × `TIMEOUT_MS` (5000 мс). Запит не живе довше за таймаут, тож найгірший випадок завжди нижче за 10 с, і `histogram_quantile` не впирається в останній бакет саме тоді, коли все погано. Демо це перевіряє: `above-top-bucket=0` при двох навмисно повільних запитах.
+
+### Демо і мої числа
+
+Кожне демо запускає застосунок окремим процесом `node dist/main.js` на своєму порту (`3411` / `3412` / `3413`) з `FAULT_INJECTION=1` і `LOG_LEVEL=debug`. Його stdout і є потік логів, який перевіряється, і він не змішується з виводом `ключ=число`. Стан чиститься на старті: демо-акаунти пересоздаються, а їхні замовлення стираються (`resetDemoAccounts`). Інваріанти демо перевіряють самі й завершуються з кодом ≠ 0, якщо щось порушено.
+
+**`npm run demo:logs`** — корелятор живе в контексті:
+
+1. Один `GET /v1/orders/:id` з `traceparent`. Усі рядки, що з'явились за час запиту, мають один `trace_id`, рівний trace-id із заголовка. Шарів чотири: `orders.controller`, `orders.service`, `orders.repo`, `http`.
+2. 12 однакових запитів паралельно, у кожного свій `traceparent`. Пул TypeORM — 10 з'єднань, тож частина запитів чекає з'єднання. Рядки групуються за `trace_id`: груп 12, усі однакового розміру.
+3. `POST /v1/auth/login` з `Authorization: Bearer <маркер-1>` і паролем `<маркер-2>`. Access-log цього запиту є, а маркерів у всьому stdout немає.
+
+**`npm run demo:metrics`** — два скрейпи `/metrics` до і після:
+
+1. Прогрів одним запитом, `series-before`.
+2. 100 запитів зі ста різними id, `series-after`.
+3. 10 запитів з `x-fault: 500` і 2 повільні запити.
+
+`sent-ok` — усе, що не 5xx; сюди входять 404 на неіснуючі id. `counter-delta` і `errors-delta` — різниця сум `http_requests_total{route="/v1/orders/:id"}` між скрейпами. `above-top-bucket` — `_count − _bucket{le="10"}` того самого маршруту.
+
+**`npm run demo:trace`** — `POST /v1/orders` з `traceparent`, `Idempotency-Key` і `x-fault: 500` → 500. Рядок access-log шукається **за `idempotencyKey`** з контексту, а не за `trace_id`, тож порівняння `trace-matches-log` не замкнене саме на себе. Після SIGTERM (SDK скидає батч) Jaeger опитується до 20 с.
+
+- `orphan-spans` — це спани, чий батьківський спан не знайдено в трейсі й не дорівнює parent-id із заголовка. Батько серверного спана віддалений і в Jaeger не потрапляє, і це нормально.
+- `span-status-error` — `otel.status_code=ERROR` у серверного спана.
+
+Три прогони поспіль, вивід однаковий:
+
+```text
+# demo:logs ×3
+non-json-lines=0 layers=4 distinct-trace-ids=1 trace-id-matches-header=1 burst=12 burst-trace-ids=12 burst-uneven=0 secret-req-logged=1 secret-in-logs=0
+# demo:metrics ×3
+sent-ok=103 sent-fail=10 counter-delta=113 errors-delta=10 above-top-bucket=0 series-before=4 series-after=4 prometheus-target-up=1
+# demo:trace ×3
+status=500 spans=45 orphan-spans=0 trace-matches-header=1 trace-matches-log=1 span-status-error=1
+```
+
+У трейсі 45 спанів: серверний HTTP, middleware/router Express, Redis (deny-list), а також SQL `pg` у транзакції checkout (`UPDATE products`, `UPDATE users`, `INSERT orders`, …, `ROLLBACK`).
+
+Щоб переконатись, що демо ловлять поломку, я ламав зібраний `dist`:
+
+| Поломка                                              | Що показало демо                                                      |
+| ---------------------------------------------------- | --------------------------------------------------------------------- |
+| `route` = сирий шлях (`req.originalUrl`)             | `series-before=4 series-after=104`, `counter-delta=0`, exit=1         |
+| прибрати `import './observability/otel'` з `main.ts` | `trace-id-matches-header=0`, `spans=0`, `trace-matches-log=0`, exit=1 |
+
+### SLO (бонус)
+
+- **SLI**: частка відповідей `/v1/orders*`, які не 5xx, тобто `1 − Errors`-панель.
+- **SLO**: 99,5 % за 30 днів.
+- **Error budget**: 0,005 × 30 діб × 24 год × 60 хв = **216 хвилин** повної недоступності на місяць, або 0,5 % запитів.
+
 ## Grading
+
+### ДЗ #29 — Observability
+
+```bash
+docker compose up -d --wait   # курсовий + стенд спостережуваності (observability/compose.yaml через include)
+
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:22918   # Jaeger, OTLP/HTTP
+export PROMETHEUS_URL=http://127.0.0.1:22901
+export TRACE_API_URL=http://127.0.0.1:22904                  # Jaeger query API (/api/traces/<id>)
+export SKIP_VAULT=1       # у грейдера немає доступу до сховища
+
+export DB_HOST=127.0.0.1 DB_PORT=6432 DB_USER=admin DB_PASSWORD=admin-secret DB_NAME=shop
+export DB_URL=postgres://admin:admin-secret@127.0.0.1:6432/shop
+export PORT=3000
+export BROKER_URL=amqp://app:app@127.0.0.1:5672
+export REDIS_URL=redis://127.0.0.1:16379
+export REDIS_QUEUE_URL=redis://127.0.0.1:16380
+export STORAGE_ENDPOINT=http://127.0.0.1:19000 STORAGE_REGION=us-east-1
+export STORAGE_ACCESS_KEY=hw26user STORAGE_SECRET_KEY=hw26secretpass STORAGE_BUCKET=hw26-files
+node -e 'const {generateKeyPairSync}=require("node:crypto");
+const k=generateKeyPairSync("ec",{namedCurve:"P-256",
+  privateKeyEncoding:{type:"pkcs8",format:"pem"},
+  publicKeyEncoding:{type:"spki",format:"pem"}});
+const fs=require("node:fs");
+fs.writeFileSync("/tmp/priv.b64",Buffer.from(k.privateKey).toString("base64"));
+fs.writeFileSync("/tmp/pub.b64",Buffer.from(k.publicKey).toString("base64"));'
+export JWT_KID=grader
+export JWT_PRIVATE_KEY="$(cat /tmp/priv.b64)"
+export JWT_PUBLIC_KEY="$(cat /tmp/pub.b64)"
+export REFRESH_TOKEN_PEPPER="$(node -e 'console.log(require("node:crypto").randomBytes(32).toString("base64url"))')"
+
+npm ci
+npx tsc --noEmit; echo "exit=$?"
+npm run build
+npm run migrate
+npm run seed
+
+npm run demo:logs
+npm run demo:metrics
+npm run demo:trace
+```
+
+Демо самі піднімають застосунок (`node dist/main.js`) на портах 3411–3413, окремо його запускати не треба. Дашборд: <http://127.0.0.1:22900> (`admin` / `admin`), трейси: <http://127.0.0.1:22904>. Щоб дашборд ожив поза демо, запусти `npm start` (порт 3000) і дай трохи трафіку.
 
 ### ДЗ #28 — Kubernetes
 

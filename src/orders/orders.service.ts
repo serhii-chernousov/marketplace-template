@@ -15,6 +15,11 @@ import { User } from '../entities/user.entity'
 import { ProblemException } from '../types/problem.exception'
 import { Order, StoreService } from '../store/store.service'
 import { OrderEventsService } from './order-events.service'
+import { OrderRepository } from './order.repository'
+import { Fault, FaultInjection } from '../common/fault-injection'
+import { logger } from '../observability/logger'
+
+const log = logger.child({ layer: 'orders.service' })
 
 const ALLOWED_STATUSES: ReadonlySet<string> = new Set([
 	'pending',
@@ -47,6 +52,8 @@ export class OrdersService {
 		private readonly dataSource: DataSource,
 		private readonly orderEvents: OrderEventsService,
 		private readonly ratings: RatingQueueService,
+		private readonly orderRows: OrderRepository,
+		private readonly faults: FaultInjection,
 	) {}
 
 	async list(caller: AuthUser, limit?: number, cursor?: string) {
@@ -62,8 +69,12 @@ export class OrdersService {
 		return this.store.paginate(filtered, limit, cursor)
 	}
 
-	async getById(id: string, caller: AuthUser): Promise<Order> {
+	async getById(id: string, caller: AuthUser, fault?: Fault): Promise<Order> {
+		log.debug({ orderId: id }, 'reading order')
 		const { order } = await this.loadAuthorizedOrder(id, caller)
+		if (fault) {
+			await this.faults.apply(fault)
+		}
 		return order
 	}
 
@@ -111,7 +122,9 @@ export class OrdersService {
 		caller: AuthUser,
 		idempotencyKey: string,
 		body: { items: Array<{ listing_id: string; quantity: number }> },
+		fault?: Fault,
 	): Promise<{ order: Order; location: string; replay: boolean }> {
+		log.debug({ items: body.items.length }, 'placing order')
 		const bodyHash = this.store.hashBody(body)
 		const cacheKey = `${caller.id}:${idempotencyKey}`
 		const cached = this.store.idempotencyStore.get(cacheKey)
@@ -209,6 +222,7 @@ export class OrdersService {
 				})),
 				idempotencyKey,
 				requestHash: bodyHash,
+				failAfterOutbox: fault?.fail,
 			})
 		} catch (err: unknown) {
 			if (err instanceof IdempotencyKeyConflictError) {
@@ -307,20 +321,7 @@ export class OrdersService {
 		row: OrderRow
 	}> {
 		const instance = instancePath ?? `/v1/orders/${id}`
-		const dbId = toDbOrderId(id)
-		const rows = await this.dataSource
-			.getRepository(OrderRow)
-			.createQueryBuilder('ord')
-			.leftJoinAndSelect('ord.user', 'buyer')
-			.leftJoinAndSelect('ord.items', 'item')
-			.leftJoinAndSelect('item.product', 'product')
-			.leftJoinAndSelect('product.seller', 'seller')
-			.where('CAST(ord.id AS text) = :dbId', { dbId })
-			.getMany()
-		const row = rows[0]
-		row?.items?.sort((left, right) =>
-			left.id < right.id ? -1 : left.id > right.id ? 1 : 0,
-		)
+		const row = await this.orderRows.findWithItems(toDbOrderId(id))
 
 		const seller = row?.items[0]?.product?.seller
 		if (!row?.user || !row.items?.length || !seller) {

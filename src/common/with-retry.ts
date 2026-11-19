@@ -1,3 +1,5 @@
+import { logger } from '../observability/logger'
+
 const RETRYABLE = new Set(['40001', '40P01'])
 
 function delay(ms: number): Promise<void> {
@@ -38,16 +40,12 @@ export async function withRetry<T>(
 		} catch (err: unknown) {
 			const code = readPgCode(err)
 			const canRetry =
-				code !== undefined &&
-				RETRYABLE.has(code) &&
-				attempt < maxAttempts
+				code !== undefined && RETRYABLE.has(code) && attempt < maxAttempts
 			if (!canRetry) {
 				throw err
 			}
 			const waitMs = 10 * 2 ** (attempt - 1)
-			console.log(
-				`retry attempt=${attempt} code=${code} backoffMs=${waitMs}`,
-			)
+			logger.warn({ attempt, code, backoffMs: waitMs }, 'retrying transaction')
 			await delay(waitMs)
 		}
 	}

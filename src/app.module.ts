@@ -16,6 +16,7 @@ import { CatalogModule } from './catalog/catalog.module'
 import { CheckoutModule } from './checkout/checkout.module'
 import { DatabaseModule } from './database/database.module'
 import { HealthModule } from './health/health.module'
+import { MetricsController } from './observability/metrics.controller'
 import { JobsModule } from './jobs/jobs.module'
 import { ListingsModule } from './listings/listings.module'
 import { OrdersModule } from './orders/orders.module'
@@ -48,6 +49,7 @@ import { UploadsModule } from './uploads/uploads.module'
 		UploadsModule,
 		HealthModule,
 	],
+	controllers: [MetricsController],
 	// AppModule is scanned before its imports, so these run before RateLimitGuard and it can key by req.user.
 	providers: [
 		{ provide: APP_GUARD, useClass: JwtAuthGuard },
@@ -70,6 +72,7 @@ export class AppModule implements NestModule {
 				{ path: 'healthz', method: RequestMethod.GET },
 				{ path: 'readyz', method: RequestMethod.GET },
 				{ path: 'db', method: RequestMethod.GET },
+				{ path: 'metrics', method: RequestMethod.GET },
 			)
 			.forRoutes('*')
 	}

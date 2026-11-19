@@ -10,6 +10,7 @@ import type { AuthRequest, AuthUser } from './auth-user'
 import { DenyList } from './deny-list'
 import { IS_PUBLIC_KEY } from './decorators'
 import { authUnavailable, unauthorized } from './problems'
+import { setContextUser } from '../observability/request-context'
 
 /** The OpenAPI validator only checks that the header mentions "bearer"; this is the real parse. */
 const BEARER = /^Bearer\s+(\S+)$/i
@@ -57,6 +58,7 @@ export class JwtAuthGuard implements CanActivate {
 			throw unauthorized('Access token has been revoked', req.originalUrl)
 		}
 		req.user = user
+		setContextUser(user.id)
 		return true
 	}
 

@@ -4,7 +4,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 source scripts/image-tag.sh
 
-CLUSTER=hw28
+CLUSTER=${CLUSTER:-hw28}
 DEPENDENCY_IMAGES=(
 	postgres:16.10-alpine
 	redis:7.4.5-alpine
@@ -13,7 +13,8 @@ DEPENDENCY_IMAGES=(
 )
 
 if ! kind get clusters 2>/dev/null | grep -qx "$CLUSTER"; then
-	kind create cluster --config k8s/kind-config.yaml --wait 90s
+	# kind does not expand variables in the config; render CLUSTER first.
+	kind create cluster --config <(sed "s|\${CLUSTER:-hw28}|$CLUSTER|g" k8s/kind-config.yaml) --wait 90s
 fi
 
 docker image inspect "$IMG" >/dev/null 2>&1 || {

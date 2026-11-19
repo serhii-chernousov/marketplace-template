@@ -7,6 +7,7 @@ cd "$ROOT"
 source scripts/image-tag.sh
 source scripts/wait-settled.sh
 
+CLUSTER=${CLUSTER:-hw28}
 PROFILE="${PROFILE:-correct}"
 MIN_REQUESTS="${MIN_REQUESTS:-6000}"
 LOAD_PATH="${LOAD_PATH:-/health}"
@@ -36,7 +37,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-if ! docker exec hw28-control-plane crictl inspecti "docker.io/library/$IMG" >/dev/null 2>&1; then
+if ! docker exec "$CLUSTER-control-plane" crictl inspecti "docker.io/library/$IMG" >/dev/null 2>&1; then
 	echo "image $IMG is not loaded into kind; run npm run image:build && npm run cluster:up" >&2
 	exit 1
 fi

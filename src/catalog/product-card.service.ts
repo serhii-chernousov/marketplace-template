@@ -69,13 +69,13 @@ export class ProductCardService {
 
 		const token = randomUUID()
 		const lockKey = productCardLockKey(productId)
-		const acquired = await this.redis.set(
-			lockKey,
-			token,
-			'PX',
-			LOCK_TTL_MS,
-			'NX',
-		)
+		let acquired: string | null
+		try {
+			acquired = await this.redis.set(lockKey, token, 'PX', LOCK_TTL_MS, 'NX')
+		} catch (err) {
+			logCacheFailure('lock', err)
+			return this.repository.load(productId)
+		}
 		if (acquired === 'OK') {
 			try {
 				const again = await this.readCache(key)
@@ -86,7 +86,9 @@ export class ProductCardService {
 				await this.writeCache(key, card)
 				return card
 			} finally {
-				await this.redis.eval(UNLOCK_LUA, 1, lockKey, token)
+				await this.redis
+					.eval(UNLOCK_LUA, 1, lockKey, token)
+					.catch((err: unknown) => logCacheFailure('unlock', err))
 			}
 		}
 
@@ -113,7 +115,13 @@ export class ProductCardService {
 	private async readCache(
 		key: string,
 	): Promise<ProductCard | null | undefined> {
-		const raw = await this.redis.get(key)
+		let raw: string | null
+		try {
+			raw = await this.redis.get(key)
+		} catch (err) {
+			logCacheFailure('get', err)
+			return undefined
+		}
 		if (raw === null) {
 			return undefined
 		}
@@ -140,8 +148,13 @@ export class ProductCardService {
 				cacheTtlSeconds(),
 			)
 		} catch (err) {
-			const message = err instanceof Error ? err.message : String(err)
-			console.error(`cache set failed: ${message}`)
+			logCacheFailure('set', err)
 		}
 	}
+}
+
+/** The cache is an optimization: a Redis outage degrades to Postgres reads. */
+function logCacheFailure(operation: string, err: unknown): void {
+	const message = err instanceof Error ? err.message : String(err)
+	console.error(`cache ${operation} failed: ${message}`)
 }

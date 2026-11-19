@@ -18,3 +18,9 @@ backups/
 
 pacts/
 
+
+.npm_token
+.pulumi/
+infra/node_modules/
+infra/**/Pulumi.*.yaml
+infra/Pulumi.*.yaml

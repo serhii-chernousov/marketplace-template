@@ -1,0 +1,14 @@
+name: marketplace-app
+description: Marketplace API, worker and schema migrations on top of the platform stack.
+runtime:
+  name: nodejs
+  options:
+    packagemanager: npm
+main: index.ts
+config:
+  profile:
+    type: string
+    default: correct
+  rev:
+    type: string
+    default: '1'

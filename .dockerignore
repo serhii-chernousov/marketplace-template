@@ -9,3 +9,13 @@ secrets
 .vscode
 *.tsbuildinfo
 task.log
+.npm_token
+.pulumi
+.secrets
+infra
+k8s
+demo
+backups
+test
+pacts
+db

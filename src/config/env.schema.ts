@@ -14,6 +14,9 @@ export const envSchema = z.object({
 	REDIS_QUEUE_URL: z.string().min(1),
 	LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
 	TIMEOUT_MS: z.coerce.number().int().positive().default(5000),
+	WARMUP_MS: z.coerce.number().int().min(0).default(0),
+	DRAIN_MS: z.coerce.number().int().min(0).default(0),
+	SHUTDOWN_TIMEOUT_MS: z.coerce.number().int().min(0).default(5000),
 })
 
 /** No defaults on purpose: a default signing key is a key committed to git. */

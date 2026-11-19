@@ -1,0 +1,7 @@
+name: marketplace-platform
+description: Data services (Postgres, Redis x2, RabbitMQ, MinIO). Changes rarely and never as part of an app deploy.
+runtime:
+  name: nodejs
+  options:
+    packagemanager: npm
+main: index.ts

@@ -1,7 +1,4 @@
-import {
-	connectBroker,
-	createChannel,
-} from '../messaging/broker'
+import { connectBroker, createChannel } from '../messaging/broker'
 import { createOrderPlacedEvent } from '../messaging/order-placed.event'
 import {
 	startOrderPlacedConsumer,
@@ -86,12 +83,7 @@ async function main(): Promise<void> {
 	console.log(`dlq-reason=${reason}`)
 	console.log(`effect=${counts.effect}`)
 
-	const allowed = new Set([
-		'rejected',
-		'expired',
-		'maxlen',
-		'delivery_limit',
-	])
+	const allowed = new Set(['rejected', 'expired', 'maxlen', 'delivery_limit'])
 	const ok =
 		rejected === 1 &&
 		work === 0 &&

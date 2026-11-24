@@ -1,9 +1,11 @@
+import { In } from 'typeorm'
 import dataSource from './database/data-source'
 import { Category } from './entities/category.entity'
 import { Order, OrderStatus } from './entities/order.entity'
 import { OrderItem } from './entities/order-item.entity'
 import { Product } from './entities/product.entity'
 import { User, UserRole } from './entities/user.entity'
+import { hashPassword } from './auth/password'
 
 interface UserSeed {
 	email: string
@@ -220,6 +222,13 @@ async function seed(): Promise<void> {
 	const itemRepo = dataSource.getRepository(OrderItem)
 
 	await userRepo.upsert(USERS, ['email'])
+	const seedPassword = process.env.SEED_PASSWORD
+	if (seedPassword) {
+		await userRepo.update(
+			{ email: In(USERS.map((user) => user.email)) },
+			{ passwordHash: await hashPassword(seedPassword) },
+		)
+	}
 	await categoryRepo.upsert(CATEGORIES, ['slug'])
 
 	const users = await userRepo.find()

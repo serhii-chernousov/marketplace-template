@@ -67,7 +67,7 @@ describe('CheckoutService', () => {
 		expect(updated.stock).toBeGreaterThanOrEqual(0)
 
 		const order = await orderRepo.findOneByOrFail({ id: result.orderId })
-		expect(order.status).toBe('paid')
+		expect(order.status).toBe('pending')
 		expect(order.totalCents).toBe(9198)
 		expect(result.totalCents).toBe(9198)
 	})

@@ -214,7 +214,7 @@ export class CheckoutService {
 				await manager.query(
 					`
 					INSERT INTO orders (user_id, status, total_cents)
-					VALUES ($1, 'paid', $2)
+					VALUES ($1, 'pending', $2)
 					RETURNING id
 					`,
 					[input.userId, totalCents],

@@ -1,9 +1,6 @@
 import { spawn } from 'child_process'
 import path from 'path'
-import {
-	connectBroker,
-	createChannel,
-} from '../messaging/broker'
+import { connectBroker, createChannel } from '../messaging/broker'
 import { createOrderPlacedEvent } from '../messaging/order-placed.event'
 import {
 	startOrderPlacedConsumer,
@@ -11,6 +8,7 @@ import {
 } from '../messaging/order-placed.consumer'
 import { assertTopology, resetQueues } from '../messaging/topology'
 import {
+	assertNoLiveConsumer,
 	openDemoDb,
 	publishRaw,
 	waitUntil,
@@ -40,6 +38,7 @@ async function main(): Promise<void> {
 
 	const { ds, store } = await openDemoDb()
 	const connection = await connectBroker()
+	await assertNoLiveConsumer(connection)
 	const channel = await createChannel(connection)
 	await resetQueues(channel)
 	await assertTopology(channel)

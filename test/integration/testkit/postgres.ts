@@ -7,6 +7,7 @@ import { TYPEORM_ENTITIES } from '../../../src/database/typeorm-entities'
 import { InitSchema1790007847172 } from '../../../src/migrations/1790007847172-InitSchema'
 import { AddProductsNameUniq1790180000000 } from '../../../src/migrations/1790180000000-AddProductsNameUniq'
 import { AddBalanceAndJobQueue1790200000000 } from '../../../src/migrations/1790200000000-AddBalanceAndJobQueue'
+import { AddOrderPlacedEffects1790300000000 } from '../../../src/migrations/1790300000000-AddOrderPlacedEffects'
 import { AddOutboxAndInbox1790400000000 } from '../../../src/migrations/1790400000000-AddOutboxAndInbox'
 import { AddAuth1790500000000 } from '../../../src/migrations/1790500000000-AddAuth'
 import { AddFiles1790600000000 } from '../../../src/migrations/1790600000000-AddFiles'
@@ -31,6 +32,7 @@ export function applyTestDatabaseEnv(uri: string): void {
 	process.env.REDIS_QUEUE_URL =
 		process.env.REDIS_QUEUE_URL || 'redis://127.0.0.1:16380'
 	process.env.BROKER_URL = process.env.BROKER_URL || 'amqp://127.0.0.1:5672'
+	process.env.MESSAGING_ENABLED = process.env.MESSAGING_ENABLED || '0'
 	process.env.STORAGE_REGION = process.env.STORAGE_REGION || 'us-east-1'
 	process.env.STORAGE_ACCESS_KEY = process.env.STORAGE_ACCESS_KEY || 'test'
 	process.env.STORAGE_SECRET_KEY = process.env.STORAGE_SECRET_KEY || 'test'
@@ -56,6 +58,7 @@ export async function startTestDatabase(): Promise<DataSource> {
 			InitSchema1790007847172,
 			AddProductsNameUniq1790180000000,
 			AddBalanceAndJobQueue1790200000000,
+			AddOrderPlacedEffects1790300000000,
 			AddOutboxAndInbox1790400000000,
 			AddAuth1790500000000,
 			AddFiles1790600000000,
@@ -74,6 +77,8 @@ export async function truncateAll(ds: DataSource): Promise<void> {
 			idempotency_keys,
 			outbox,
 			processed_messages,
+			order_placed_effects,
+			order_placed_deliveries,
 			order_items,
 			orders,
 			jobs,

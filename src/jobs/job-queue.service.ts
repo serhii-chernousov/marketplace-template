@@ -87,17 +87,15 @@ export class JobQueueService {
 		const processed: string[] = []
 
 		for (;;) {
-			const claimed = await this.dataSource.transaction(
-				async (manager) => {
-					const job = await this.claimJob(manager, jobIds)
-					if (!job) {
-						return null
-					}
-					await delay(workMs)
-					await this.completeJob(manager, job.id, workerId)
-					return job.id
-				},
-			)
+			const claimed = await this.dataSource.transaction(async (manager) => {
+				const job = await this.claimJob(manager, jobIds)
+				if (!job) {
+					return null
+				}
+				await delay(workMs)
+				await this.completeJob(manager, job.id, workerId)
+				return job.id
+			})
 
 			if (claimed) {
 				processed.push(claimed)

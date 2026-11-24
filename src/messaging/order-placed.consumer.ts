@@ -81,6 +81,7 @@ export async function startOrderPlacedConsumer(
 	connection: ChannelModel,
 	channel: Channel,
 	store: EffectStore,
+	onApplied?: (event: OrderPlacedEvent) => void,
 ): Promise<ConsumerHandle> {
 	const crashBeforeAck = process.env.CRASH_BEFORE_ACK === '1'
 	const handle: ConsumerHandle = {
@@ -119,6 +120,9 @@ export async function startOrderPlacedConsumer(
 
 				channel.ack(msg)
 				await store.markAcked(event.eventId)
+				if (applied) {
+					onApplied?.(event)
+				}
 			} catch (err) {
 				logger.error({ err }, 'order.placed consumer error')
 				if (isTransientConsumerError(err)) {

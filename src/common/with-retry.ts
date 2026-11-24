@@ -33,6 +33,7 @@ export function readPgCode(err: unknown): string | undefined {
 export async function withRetry<T>(
 	fn: () => Promise<T>,
 	maxAttempts = 5,
+	onRetry?: (attempt: number, code: string) => void,
 ): Promise<T> {
 	for (let attempt = 1; attempt <= maxAttempts; attempt++) {
 		try {
@@ -46,6 +47,7 @@ export async function withRetry<T>(
 			}
 			const waitMs = 10 * 2 ** (attempt - 1)
 			logger.warn({ attempt, code, backoffMs: waitMs }, 'retrying transaction')
+			onRetry?.(attempt, code)
 			await delay(waitMs)
 		}
 	}

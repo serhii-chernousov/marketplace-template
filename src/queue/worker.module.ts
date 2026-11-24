@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common'
 import { ConfigModule } from '@nestjs/config'
 import { CatalogModule } from '../catalog/catalog.module'
-import { validateWorkerEnv } from '../config/env.schema'
+import { configEnvFiles, validateWorkerEnv } from '../config/env.schema'
 import { DatabaseModule } from '../database/database.module'
 import { RedisModule } from '../redis/redis.module'
 import { RatingWorker } from './rating.worker'
@@ -12,7 +12,7 @@ import { RatingWorker } from './rating.worker'
 		ConfigModule.forRoot({
 			isGlobal: true,
 			validate: validateWorkerEnv,
-			envFilePath: '.env',
+			envFilePath: configEnvFiles(),
 		}),
 		DatabaseModule,
 		RedisModule,

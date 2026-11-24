@@ -26,11 +26,36 @@ export async function openDemoDb(): Promise<{
 	return { ds, store: new EffectStore(ds) }
 }
 
+/**
+ * These demos reset the queues and run their own relay and consumer.
+ * A live API consumer would steal their messages and outbox rows.
+ */
+export async function assertNoLiveConsumer(
+	connection: ChannelModel,
+): Promise<void> {
+	const probe = await createChannel(connection)
+	let consumers = 0
+	try {
+		consumers = (await probe.checkQueue(ORDER_PLACED_QUEUE)).consumerCount
+		await probe.close()
+	} catch {
+		// checkQueue on a missing queue closes the channel: nobody is listening.
+	}
+	if (consumers > 0) {
+		console.error(
+			`${ORDER_PLACED_QUEUE} has ${consumers} live consumer(s). ` +
+				'Stop API messaging first: MESSAGING_ENABLED=0 docker compose up -d api',
+		)
+		process.exit(2)
+	}
+}
+
 export async function prepareBroker(): Promise<{
 	connection: ChannelModel
 	channel: Channel
 }> {
 	const connection = await connectBroker()
+	await assertNoLiveConsumer(connection)
 	const channel = await createChannel(connection)
 	await resetQueues(channel)
 	await assertTopology(channel)

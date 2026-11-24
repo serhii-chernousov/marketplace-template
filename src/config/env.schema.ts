@@ -31,6 +31,12 @@ export const authEnvSchema = z.object({
 	REFRESH_TOKEN_PEPPER: z.string().min(32),
 })
 
+/** The API process relays the outbox and consumes order.placed unless switched off. */
+export const messagingEnvSchema = z.object({
+	MESSAGING_ENABLED: z.enum(['0', '1']).default('1'),
+	OUTBOX_POLL_MS: z.coerce.number().int().positive().default(500),
+})
+
 /** Empty STORAGE_ENDPOINT means real AWS S3. */
 export const storageEnvSchema = z.object({
 	STORAGE_ENDPOINT: z.string().optional(),
@@ -43,6 +49,7 @@ export const storageEnvSchema = z.object({
 const apiEnvSchema = envSchema
 	.extend(authEnvSchema.shape)
 	.extend(storageEnvSchema.shape)
+	.extend(messagingEnvSchema.shape)
 	.superRefine((env, ctx) => {
 		const problem = signingKeyPairProblem(
 			env.JWT_PRIVATE_KEY,
@@ -97,3 +104,12 @@ export const validateApiEnv = (raw: Record<string, unknown>): ApiEnv =>
 /** The worker never signs tokens, so it does not get the signing key. */
 export const validateWorkerEnv = (raw: Record<string, unknown>): Env =>
 	parseEnv(envSchema, raw)
+
+/**
+ * Real environment variables always win over these files. CONFIG_ENV_FILE
+ * lets docker compose hand in keys generated at first start.
+ */
+export function configEnvFiles(): string[] {
+	const extra = process.env.CONFIG_ENV_FILE
+	return extra ? [extra, '.env'] : ['.env']
+}

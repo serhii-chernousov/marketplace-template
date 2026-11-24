@@ -5,6 +5,7 @@ import {
 	Headers,
 	HttpCode,
 	Param,
+	Patch,
 	Post,
 	Query,
 	Res,
@@ -59,6 +60,17 @@ export class OrdersController {
 			res.setHeader('Idempotency-Replay', 'true')
 		}
 		return result.order
+	}
+
+	@Patch(':id/status')
+	@Roles('seller', 'admin')
+	updateStatus(
+		@Param('id') id: string,
+		@CurrentUser() user: AuthUser,
+		@Body() body: { status: string },
+	) {
+		log.info({ orderId: id, status: body.status }, 'update order status')
+		return this.orders.updateStatus(id, user, body.status)
 	}
 
 	@Get(':id')

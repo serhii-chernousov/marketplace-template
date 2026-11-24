@@ -43,7 +43,7 @@ describe('Marketplace frontend consumer contract', () => {
 						},
 					],
 					total_cents: like(4599),
-					status: 'paid',
+					status: 'pending',
 				},
 			})
 

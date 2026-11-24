@@ -56,8 +56,6 @@ $grant$
 		await queryRunner.query(
 			`ALTER TABLE "users" DROP CONSTRAINT "users_balance_chk"`,
 		)
-		await queryRunner.query(
-			`ALTER TABLE "users" DROP COLUMN "balance_cents"`,
-		)
+		await queryRunner.query(`ALTER TABLE "users" DROP COLUMN "balance_cents"`)
 	}
 }

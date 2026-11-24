@@ -39,7 +39,7 @@ export class EffectStore {
 	}
 
 	/**
-	 * Inbox mark and business effect commit together.
+	 * Inbox mark, effect row and the order's pending → paid move commit together.
 	 * A duplicate delivery conflicts on both and changes neither.
 	 *
 	 * @returns true when the effect row was inserted (first delivery);
@@ -66,7 +66,21 @@ export class EffectStore {
 					[event.eventId, event.orderId, event.occurredAt],
 				),
 			)
-			return rows.length > 0
+			if (rows.length === 0) {
+				return false
+			}
+			const dbOrderId = /^order-(\d+)$/.exec(event.orderId)?.[1]
+			if (dbOrderId) {
+				await manager.query(
+					`
+					UPDATE orders
+					SET status = 'paid'
+					WHERE id = $1::bigint AND status = 'pending'
+					`,
+					[dbOrderId],
+				)
+			}
+			return true
 		})
 		if (applied) {
 			this.successfulApplies += 1

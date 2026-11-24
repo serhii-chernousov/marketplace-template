@@ -1,16 +1,7 @@
-import {
-	Body,
-	Controller,
-	Get,
-	Headers,
-	Param,
-	Patch,
-	Req,
-	Res,
-} from '@nestjs/common'
+import { Controller, Get, Headers, Param, Req, Res } from '@nestjs/common'
 import { Request, Response } from 'express'
 import type { AuthUser } from '../auth/auth-user'
-import { CurrentUser, Roles } from '../auth/decorators'
+import { CurrentUser } from '../auth/decorators'
 import { OrderEventsService, OrderStatusEvent } from './order-events.service'
 import { OrdersService, canonicalOrderId } from './orders.service'
 
@@ -42,10 +33,9 @@ export function parseLastEventId(header: string | undefined): number | null {
 }
 
 /**
- * Realtime HTTP surface (outside /v1 OpenAPI contract).
- * GET /orders/:id/events — SSE; PATCH /orders/:id/status — status mutation + bus publish.
- * Both sit behind the global JWT guard, so an SSE client must send Authorization
- * (native EventSource cannot; a fetch-based client can).
+ * SSE stream, outside the /v1 OpenAPI contract: text/event-stream has no
+ * response schema to validate. It sits behind the global JWT guard, so a
+ * client must send Authorization (native EventSource cannot; fetch can).
  */
 @Controller('orders')
 export class OrderEventsController {
@@ -88,15 +78,5 @@ export class OrderEventsController {
 		req.on('close', () => {
 			subscription.unsubscribe()
 		})
-	}
-
-	@Patch(':id/status')
-	@Roles('seller', 'admin')
-	updateStatus(
-		@Param('id') id: string,
-		@CurrentUser() user: AuthUser,
-		@Body() body: { status: string },
-	) {
-		return this.orders.updateStatus(id, user, body.status)
 	}
 }

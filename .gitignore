@@ -24,3 +24,6 @@ pacts/
 infra/node_modules/
 infra/**/Pulumi.*.yaml
 infra/Pulumi.*.yaml
+
+# Private defense notes
+defense/

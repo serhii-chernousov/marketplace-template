@@ -245,6 +245,41 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+  /orders/{id}/status:
+    patch:
+      operationId: updateOrderStatus
+      security:
+        - bearerAuth: []
+      summary: Змінити статус замовлення
+      description: >
+        Лише seller цього замовлення або admin. Дозволені переходи:
+        pending|paid → cancelled, paid → shipped, shipped → delivered.
+        pending → paid робить лише система (споживач order.placed).
+      parameters:
+        - $ref: '#/components/parameters/OrderId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateOrderStatusRequest'
+      responses:
+        '200':
+          description: Статус змінено
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderStatusChange'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
   /products:
     post:
       operationId: createProduct
@@ -773,8 +808,31 @@ components:
           minimum: 1
           description: Сума в копійках (ціле число)
         status:
+          $ref: '#/components/schemas/OrderStatus'
+    OrderStatus:
+      type: string
+      description: >
+        pending — створено, кошти й товар зарезервовано; paid — споживач
+        order.placed підтвердив оплату; далі shipped → delivered; cancelled
+        повертає товар і кошти.
+      enum: [pending, paid, shipped, delivered, cancelled]
+    UpdateOrderStatusRequest:
+      type: object
+      required: [status]
+      additionalProperties: false
+      properties:
+        status:
           type: string
-          enum: [created, paid, cancelled]
+          enum: [shipped, delivered, cancelled]
+    OrderStatusChange:
+      type: object
+      required: [id, status]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+        status:
+          $ref: '#/components/schemas/OrderStatus'
     CreateOrderRequest:
       type: object
       required: [items]

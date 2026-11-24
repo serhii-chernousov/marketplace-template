@@ -17,6 +17,9 @@ export const envSchema = z.object({
 	WARMUP_MS: z.coerce.number().int().min(0).default(0),
 	DRAIN_MS: z.coerce.number().int().min(0).default(0),
 	SHUTDOWN_TIMEOUT_MS: z.coerce.number().int().min(0).default(5000),
+	OTEL_EXPORTER_OTLP_ENDPOINT: z.url().optional(),
+	OTEL_SERVICE_NAME: z.string().min(1).default('marketplace-api'),
+	FAULT_INJECTION: z.enum(['0', '1']).default('0'),
 })
 
 /** No defaults on purpose: a default signing key is a key committed to git. */
@@ -26,6 +29,12 @@ export const authEnvSchema = z.object({
 	JWT_KID: z.string().min(1),
 	JWT_EXTRA_PUBLIC_KEYS: z.string().optional(),
 	REFRESH_TOKEN_PEPPER: z.string().min(32),
+})
+
+/** The API process relays the outbox and consumes order.placed unless switched off. */
+export const messagingEnvSchema = z.object({
+	MESSAGING_ENABLED: z.enum(['0', '1']).default('1'),
+	OUTBOX_POLL_MS: z.coerce.number().int().positive().default(500),
 })
 
 /** Empty STORAGE_ENDPOINT means real AWS S3. */
@@ -40,6 +49,7 @@ export const storageEnvSchema = z.object({
 const apiEnvSchema = envSchema
 	.extend(authEnvSchema.shape)
 	.extend(storageEnvSchema.shape)
+	.extend(messagingEnvSchema.shape)
 	.superRefine((env, ctx) => {
 		const problem = signingKeyPairProblem(
 			env.JWT_PRIVATE_KEY,
@@ -94,3 +104,12 @@ export const validateApiEnv = (raw: Record<string, unknown>): ApiEnv =>
 /** The worker never signs tokens, so it does not get the signing key. */
 export const validateWorkerEnv = (raw: Record<string, unknown>): Env =>
 	parseEnv(envSchema, raw)
+
+/**
+ * Real environment variables always win over these files. CONFIG_ENV_FILE
+ * lets docker compose hand in keys generated at first start.
+ */
+export function configEnvFiles(): string[] {
+	const extra = process.env.CONFIG_ENV_FILE
+	return extra ? [extra, '.env'] : ['.env']
+}

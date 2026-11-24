@@ -28,11 +28,7 @@ export async function assertTopology(channel: Channel): Promise<void> {
 			'x-dead-letter-exchange': DLX_EXCHANGE,
 		},
 	})
-	await channel.bindQueue(
-		ORDER_PLACED_QUEUE,
-		EVENTS_EXCHANGE,
-		ORDER_PLACED_KEY,
-	)
+	await channel.bindQueue(ORDER_PLACED_QUEUE, EVENTS_EXCHANGE, ORDER_PLACED_KEY)
 
 	await channel.prefetch(PREFETCH)
 }

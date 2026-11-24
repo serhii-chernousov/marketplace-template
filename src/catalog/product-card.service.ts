@@ -7,6 +7,7 @@ import {
 	ProductCardRepository,
 	type ProductCard,
 } from './product-card.repository'
+import { logger } from '../observability/logger'
 
 const CACHE_TTL_BASE_SEC = 300
 const CACHE_TTL_JITTER_SEC = 60
@@ -156,5 +157,5 @@ export class ProductCardService {
 /** The cache is an optimization: a Redis outage degrades to Postgres reads. */
 function logCacheFailure(operation: string, err: unknown): void {
 	const message = err instanceof Error ? err.message : String(err)
-	console.error(`cache ${operation} failed: ${message}`)
+	logger.warn({ operation, error: message }, 'cache operation failed')
 }

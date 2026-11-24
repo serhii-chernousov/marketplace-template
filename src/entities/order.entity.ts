@@ -12,11 +12,7 @@ import { OrderItem } from './order-item.entity'
 import { User } from './user.entity'
 
 export type OrderStatus =
-	| 'pending'
-	| 'paid'
-	| 'shipped'
-	| 'delivered'
-	| 'cancelled'
+	'pending' | 'paid' | 'shipped' | 'delivered' | 'cancelled'
 
 /**
  * Buyer order. `total_cents` is denormalized sum of items (integer kopecks).

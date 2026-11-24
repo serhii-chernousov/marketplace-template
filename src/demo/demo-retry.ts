@@ -39,30 +39,20 @@ async function main(): Promise<void> {
 	await ds.initialize()
 
 	try {
-		await ds.query(
-			`UPDATE concurrency_probe SET value = 0 WHERE id = 1`,
-		)
+		await ds.query(`UPDATE concurrency_probe SET value = 0 WHERE id = 1`)
 
 		const barrier = createBarrier(2)
 		let caughtCode: string | undefined
 		let retryCount = 0
 
-		const originalLog = console.log
-		console.log = (...args: unknown[]) => {
-			const line = args.map(String).join(' ')
-			if (line.includes('retry attempt=')) {
-				retryCount += 1
-				const match = line.match(/code=(\w+)/)
-				if (match) {
-					caughtCode = match[1]
-				}
-			}
-			originalLog(...args)
+		const onRetry = (_attempt: number, code: string): void => {
+			retryCount += 1
+			caughtCode = code
 		}
 
-		try {
-			await Promise.all([
-				withRetry(() =>
+		await Promise.all([
+			withRetry(
+				() =>
 					ds.transaction('REPEATABLE READ', async (manager) => {
 						const rows = asRows<{ value: number }>(
 							await manager.query(
@@ -76,8 +66,11 @@ async function main(): Promise<void> {
 							[current + 1],
 						)
 					}),
-				),
-				withRetry(() =>
+				5,
+				onRetry,
+			),
+			withRetry(
+				() =>
 					ds.transaction('REPEATABLE READ', async (manager) => {
 						const rows = asRows<{ value: number }>(
 							await manager.query(
@@ -91,33 +84,28 @@ async function main(): Promise<void> {
 							[current + 1],
 						)
 					}),
-				),
-			])
-		} finally {
-			console.log = originalLog
-		}
+				5,
+				onRetry,
+			),
+		])
 
 		const finalRows = asRows<{ value: number }>(
-			await ds.query(
-				`SELECT value FROM concurrency_probe WHERE id = 1`,
-			),
+			await ds.query(`SELECT value FROM concurrency_probe WHERE id = 1`),
 		)
 		const finalValue = Number(finalRows[0].value)
 
-		console.log(
-			`caught: ${caughtCode ?? 'none'} (40001|40P01 expected)`,
-		)
+		console.log(`caught: ${caughtCode ?? 'none'} (40001|40P01 expected)`)
 		console.log(`retry count: ${retryCount}`)
 		console.log(`final value: ${finalValue}`)
 
-		const okCode =
-			caughtCode === '40001' || caughtCode === '40P01'
+		const okCode = caughtCode === '40001' || caughtCode === '40P01'
 		if (!okCode || retryCount < 1 || finalValue !== 2) {
 			if (!caughtCode) {
-				console.error(
-					'expected at least one serialization/deadlock retry',
-					{ caughtCode, retryCount, finalValue },
-				)
+				console.error('expected at least one serialization/deadlock retry', {
+					caughtCode,
+					retryCount,
+					finalValue,
+				})
 			}
 			process.exitCode = 1
 		}

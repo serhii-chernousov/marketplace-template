@@ -1,136 +1,108 @@
 #!/usr/bin/env node
 /**
- * Headless room-isolation demo for WebSocket order.status events.
+ * Realtime isolation over socket.io, against a running API.
  *
- * Default: clients join different rooms → B must NOT hear A's status change.
- * --same-room: both clients join order A → B MUST hear (proves the script measures reality).
+ * Default: A (buyer1) joins its own order; B (buyer2) is refused that room and
+ * joins its own order instead → only A hears the status change.
+ * --same-room: B is a second socket of buyer1 in the same room → B must hear
+ * it, which proves the script measures reality.
  */
 import { io } from 'socket.io-client'
+import {
+	BASE,
+	createOrder,
+	login,
+	patchStatus,
+	waitForStatus,
+} from './lib/api-client.mjs'
 
-const BASE = process.env.BASE_URL ?? 'http://localhost:3000'
 const sameRoom = process.argv.includes('--same-room')
 
-async function createOrder(listingId, key) {
-	const res = await fetch(`${BASE}/v1/orders`, {
-		method: 'POST',
-		headers: {
-			'Content-Type': 'application/json',
-			'X-User-Id': 'buyer-1',
-			'X-User-Role': 'buyer',
-			'Idempotency-Key': key,
-		},
-		body: JSON.stringify({
-			items: [{ listing_id: listingId, quantity: 1 }],
-		}),
-	})
-	if (!res.ok) {
-		const text = await res.text()
-		throw new Error(`POST /v1/orders failed: ${res.status} ${text}`)
-	}
-	const body = await res.json()
-	return body.id
-}
-
-async function patchStatus(orderId, status) {
-	const res = await fetch(`${BASE}/orders/${orderId}/status`, {
-		method: 'PATCH',
-		headers: {
-			'Content-Type': 'application/json',
-			'X-User-Id': 'buyer-1',
-			'X-User-Role': 'buyer',
-		},
-		body: JSON.stringify({ status }),
-	})
-	if (!res.ok) {
-		const text = await res.text()
-		throw new Error(`PATCH status failed: ${res.status} ${text}`)
-	}
-}
-
-function connectClient() {
-	return io(BASE, {
-		auth: { userId: 'buyer-1', role: 'buyer' },
-		transports: ['websocket', 'polling'],
-	})
-}
-
-function waitConnect(socket) {
+function connect(token) {
+	const socket = io(BASE, { auth: { token }, transports: ['websocket'] })
 	return new Promise((resolve, reject) => {
-		const t = setTimeout(() => reject(new Error('connect timeout')), 5000)
+		const timer = setTimeout(() => reject(new Error('connect timeout')), 5000)
 		socket.once('connect', () => {
-			clearTimeout(t)
-			resolve()
+			clearTimeout(timer)
+			resolve(socket)
 		})
 		socket.once('connect_error', (err) => {
-			clearTimeout(t)
+			clearTimeout(timer)
 			reject(err)
 		})
 	})
 }
 
-function joinRoom(socket, orderId) {
-	return new Promise((resolve, reject) => {
-		const t = setTimeout(() => reject(new Error(`join timeout for ${orderId}`)), 5000)
-		socket.emit('join', orderId, (ack) => {
-			clearTimeout(t)
-			if (ack?.ok) {
-				resolve(ack)
-			} else {
-				reject(new Error(`join denied: ${ack?.error ?? 'unknown'}`))
-			}
-		})
+function join(socket, orderId) {
+	return new Promise((resolve) => {
+		socket.emit('join', orderId, (ack) => resolve(ack ?? { ok: false }))
 	})
 }
 
-function waitEvent(socket, timeoutMs) {
+function received(socket, orderId, status, timeoutMs) {
 	return new Promise((resolve) => {
-		const t = setTimeout(() => {
+		const timer = setTimeout(() => {
 			socket.off('order.status', onEvent)
-			resolve(false)
+			resolve(0)
 		}, timeoutMs)
-		function onEvent() {
-			clearTimeout(t)
-			socket.off('order.status', onEvent)
-			resolve(true)
+		function onEvent(event) {
+			if (event.id === orderId && event.status === status) {
+				clearTimeout(timer)
+				socket.off('order.status', onEvent)
+				resolve(1)
+			}
 		}
 		socket.on('order.status', onEvent)
 	})
 }
 
-async function main() {
-	const stamp = Date.now()
-	const orderA = await createOrder('listing-1', `rt-a-${stamp}`)
-	const orderB = await createOrder('listing-2', `rt-b-${stamp}`)
-	const roomB = sameRoom ? orderA : orderB
-	const expectB = sameRoom ? 1 : 0
-
-	const clientA = connectClient()
-	const clientB = connectClient()
-
-	try {
-		await Promise.all([waitConnect(clientA), waitConnect(clientB)])
-		await Promise.all([joinRoom(clientA, orderA), joinRoom(clientB, roomB)])
-
-		const waitA = waitEvent(clientA, 3000)
-		const waitB = waitEvent(clientB, 3000)
-
-		await patchStatus(orderA, 'shipped')
-
-		const gotA = (await waitA) ? 1 : 0
-		const gotB = (await waitB) ? 1 : 0
-
-		console.log(`A_RECEIVED=${gotA}`)
-		console.log(`B_RECEIVED=${gotB}`)
-
-		const ok = gotA === 1 && gotB === expectB
-		process.exit(ok ? 0 : 1)
-	} finally {
-		clientA.close()
-		clientB.close()
+async function paidOrder(token, key) {
+	const res = await createOrder(token, key)
+	if (res.status !== 201) {
+		throw new Error(
+			`POST /v1/orders → ${res.status} ${JSON.stringify(res.body)}`,
+		)
 	}
+	await waitForStatus(token, res.body.id, 'paid')
+	return res.body.id
 }
 
-main().catch((err) => {
-	console.error(err)
-	process.exit(1)
-})
+const stamp = Date.now()
+const buyer1 = await login('buyer1@shop.local')
+const buyer2 = await login('buyer2@shop.local')
+const seller = await login('seller1@shop.local')
+
+const orderA = await paidOrder(buyer1, `rt-a-${stamp}`)
+const orderB = await paidOrder(buyer2, `rt-b-${stamp}`)
+
+const clientA = await connect(buyer1)
+const clientB = await connect(sameRoom ? buyer1 : buyer2)
+
+try {
+	await join(clientA, orderA)
+	if (sameRoom) {
+		await join(clientB, orderA)
+	} else {
+		const foreign = await join(clientB, orderA)
+		console.log(`B_JOIN_FOREIGN=${foreign.ok ? 'allowed' : 'denied'}`)
+		await join(clientB, orderB)
+	}
+
+	const waitA = received(clientA, orderA, 'shipped', 3000)
+	const waitB = received(clientB, orderA, 'shipped', 3000)
+	const patched = await patchStatus(seller, orderA, 'shipped')
+	if (patched.status !== 200) {
+		throw new Error(
+			`PATCH status → ${patched.status} ${JSON.stringify(patched.body)}`,
+		)
+	}
+
+	const gotA = await waitA
+	const gotB = await waitB
+	console.log(`A_RECEIVED=${gotA}`)
+	console.log(`B_RECEIVED=${gotB}`)
+	process.exitCode = gotA === 1 && gotB === (sameRoom ? 1 : 0) ? 0 : 1
+} finally {
+	clientA.close()
+	clientB.close()
+}

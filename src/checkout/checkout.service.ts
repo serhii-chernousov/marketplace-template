@@ -3,6 +3,9 @@ import { DataSource } from 'typeorm'
 import { asRows } from '../common/pg-rows'
 import { withRetry } from '../common/with-retry'
 import { toOrderPlacedEvent } from '../messaging/order-placed.event'
+import { logger } from '../observability/logger'
+
+const log = logger.child({ layer: 'checkout.repo' })
 
 export interface CheckoutItemInput {
 	productId: string
@@ -131,6 +134,7 @@ export class CheckoutService {
 		}
 
 		const lockedItems = itemsInLockOrder(input.items)
+		log.debug({ items: input.items.length }, 'checkout transaction')
 
 		try {
 			return await withRetry(() => this.insertCheckout(input, lockedItems))
@@ -210,7 +214,7 @@ export class CheckoutService {
 				await manager.query(
 					`
 					INSERT INTO orders (user_id, status, total_cents)
-					VALUES ($1, 'paid', $2)
+					VALUES ($1, 'pending', $2)
 					RETURNING id
 					`,
 					[input.userId, totalCents],

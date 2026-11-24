@@ -1,3 +1,35 @@
+include:
+  - observability/compose.yaml
+
+# Dev-only values for a local stack. Real environments take them from
+# Infisical (scripts/with-secrets.sh) or a K8s Secret; nothing here is reused there.
+x-app-image: &app-image
+  image: marketplace-api:local
+  build:
+    context: .
+    dockerfile: docker/Dockerfile
+
+x-app-env: &app-env
+  DB_HOST: pgbouncer
+  DB_PORT: '6432'
+  DB_USER: app_user
+  DB_PASSWORD: ${APP_DB_PASSWORD:-app-secret-initial}
+  DB_NAME: shop
+  DB_URL: postgresql://app_user:${APP_DB_PASSWORD:-app-secret-initial}@pgbouncer:6432/shop
+  BROKER_URL: amqp://${RABBITMQ_DEFAULT_USER:-app}:${RABBITMQ_DEFAULT_PASS:-app}@rabbitmq:5672
+  REDIS_URL: redis://redis-cache:6379
+  REDIS_QUEUE_URL: redis://redis-queue:6379
+  PORT: '3000'
+  LOG_LEVEL: info
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+  OTEL_SERVICE_NAME: marketplace-api
+  STORAGE_ENDPOINT: http://minio:9000
+  STORAGE_REGION: us-east-1
+  STORAGE_ACCESS_KEY: ${MINIO_ROOT_USER:-hw26user}
+  STORAGE_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-hw26secretpass}
+  STORAGE_BUCKET: hw26-files
+  CONFIG_ENV_FILE: /keys/jwt.env
+
 services:
   db:
     image: postgres:16-alpine
@@ -55,6 +87,10 @@ services:
       start_period: 15s
   rabbitmq:
     image: rabbitmq:4.2-management
+    # The data dir is named after the node, so the hostname must not change between runs.
+    hostname: rabbitmq
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
     ports:
       - '5672:5672'
       - '15672:15672'
@@ -80,6 +116,8 @@ services:
   redis-queue:
     image: redis:8-alpine
     command: redis-server --maxmemory-policy noeviction --appendonly yes --appendfsync everysec
+    volumes:
+      - redis-queue-data:/data
     ports:
       - '16380:6379'
     healthcheck:
@@ -108,5 +146,103 @@ services:
       interval: 5s
       timeout: 5s
       retries: 12
+  keygen:
+    image: node:22-alpine
+    # First start only: tokens must keep verifying after `docker compose restart`.
+    command:
+      - sh
+      - -c
+      - >-
+        [ -s /keys/jwt.env ] || {
+        node /scripts/jwt-keygen.mjs compose-dev > /keys/jwt.env.tmp &&
+        node -e "console.log('REFRESH_TOKEN_PEPPER=' + require('crypto').randomBytes(32).toString('hex'))" >> /keys/jwt.env.tmp &&
+        mv /keys/jwt.env.tmp /keys/jwt.env; }
+    volumes:
+      - ./scripts/jwt-keygen.mjs:/scripts/jwt-keygen.mjs:ro
+      - jwt-keys:/keys
+  migrate:
+    <<: *app-image
+    # Straight to Postgres: DDL and CREATE INDEX CONCURRENTLY do not belong behind transaction pooling.
+    command:
+      [
+        'node_modules/typeorm/cli.js',
+        'migration:run',
+        '-d',
+        'dist/database/data-source.js',
+      ]
+    environment:
+      <<: *app-env
+      DB_HOST: db
+      DB_PORT: '5432'
+    depends_on:
+      db:
+        condition: service_healthy
+  seed:
+    <<: *app-image
+    command: ['dist/seed.js']
+    environment:
+      <<: *app-env
+      DB_HOST: db
+      DB_PORT: '5432'
+      SEED_PASSWORD: ${SEED_PASSWORD:-marketplace-dev}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+  api:
+    <<: *app-image
+    environment:
+      <<: *app-env
+      MESSAGING_ENABLED: ${MESSAGING_ENABLED:-1}
+    ports:
+      - '${API_PORT:-3000}:3000'
+    volumes:
+      - jwt-keys:/keys:ro
+    depends_on:
+      keygen:
+        condition: service_completed_successfully
+      seed:
+        condition: service_completed_successfully
+      pgbouncer:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      redis-cache:
+        condition: service_healthy
+      redis-queue:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      jaeger:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          'CMD',
+          '/nodejs/bin/node',
+          '-e',
+          "fetch('http://127.0.0.1:3000/readyz').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+  worker:
+    <<: *app-image
+    command: ['dist/worker.js']
+    environment:
+      <<: *app-env
+      OTEL_SERVICE_NAME: marketplace-worker
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      pgbouncer:
+        condition: service_healthy
+      redis-cache:
+        condition: service_healthy
+      redis-queue:
+        condition: service_healthy
 volumes:
   pgdata:
+  rabbitmq-data:
+  redis-queue-data:
+  jwt-keys:

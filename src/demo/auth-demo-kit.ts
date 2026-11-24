@@ -38,10 +38,14 @@ export async function startDemoApp(port: number): Promise<DemoApp> {
 	}, 60_000).unref()
 
 	process.env.PORT = String(port)
+	// The demo checks auth only; a second order.placed consumer would race the running API.
+	process.env.MESSAGING_ENABLED ??= '0'
 	const { AppModule } = await import('../app.module')
 	const { configureApp } = await import('../configure-app')
+	const { connectRedisClients } = await import('../redis/redis.module')
 	const app = await NestFactory.create(AppModule, { logger: ['error', 'warn'] })
 	configureApp(app)
+	await connectRedisClients(app)
 	await app.listen(port, '127.0.0.1')
 
 	const baseUrl = `http://127.0.0.1:${port}`

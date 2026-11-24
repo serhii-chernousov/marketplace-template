@@ -40,4 +40,37 @@ describe('EffectStore.applyEffect', () => {
 		await store.reset()
 		expect(store.appliedCount()).toBe(0)
 	})
+
+	it('moves a pending order to paid only on the first delivery', async () => {
+		let inserted = true
+		const statements: string[] = []
+		const manager = {
+			query: jest.fn(async (sql: string) => {
+				statements.push(sql)
+				if (sql.includes('order_placed_effects')) {
+					return inserted ? [{ event_id: EVENT.eventId }] : []
+				}
+				return []
+			}),
+		}
+		const dataSource = {
+			transaction: jest.fn(
+				async (run: (m: typeof manager) => Promise<boolean>) => run(manager),
+			),
+		}
+		const store = new EffectStore(dataSource as unknown as DataSource)
+		const paidUpdates = () =>
+			statements.filter((sql) => sql.includes("status = 'paid'")).length
+
+		await store.applyEffect({ ...EVENT, orderId: 'order-9' })
+		expect(paidUpdates()).toBe(1)
+		expect(manager.query).toHaveBeenLastCalledWith(
+			expect.stringContaining("AND status = 'pending'"),
+			['9'],
+		)
+
+		inserted = false
+		await store.applyEffect({ ...EVENT, orderId: 'order-9' })
+		expect(paidUpdates()).toBe(1)
+	})
 })

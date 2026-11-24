@@ -1,0 +1,54 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Type check and build
+        run: npm run build
+      - name: Formatting
+        run: npm run format:check
+      - name: OpenAPI lint
+        run: npm run lint:openapi
+      - name: .env.example matches the config schema
+        run: npm run check:env
+      - name: Unit tests
+        run: npm run test:unit
+
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      # Twice in a row: the second run proves the tests clean up after themselves.
+      - name: Integration tests against Postgres (run 1)
+        run: npm run test:integration
+      - name: Integration tests against Postgres (run 2)
+        run: npm run test:integration
+      - name: E2E (Postgres + RabbitMQ in containers)
+        run: npm run test:e2e
+
+  workflows:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: actionlint
+        run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.7 -color

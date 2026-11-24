@@ -6,23 +6,38 @@ import {
 	InsufficientFundsError,
 	OutOfStockError,
 } from '../checkout/checkout.service'
-import { Order as OrderRow } from '../entities/order.entity'
+import { Order as OrderRow, OrderStatus } from '../entities/order.entity'
 import { Product } from '../entities/product.entity'
 import type { AuthUser } from '../auth/auth-user'
-import { publicUserId, publicUserIdOf } from '../common/public-user-id'
+import { publicUserId } from '../common/public-user-id'
 import { RatingQueueService } from '../queue/rating-queue.service'
 import { User } from '../entities/user.entity'
 import { ProblemException } from '../types/problem.exception'
 import { Order, StoreService } from '../store/store.service'
 import { OrderEventsService } from './order-events.service'
+import { OrderRepository } from './order.repository'
+import { Fault, FaultInjection } from '../common/fault-injection'
+import { logger } from '../observability/logger'
 
-const ALLOWED_STATUSES: ReadonlySet<string> = new Set([
-	'pending',
-	'paid',
-	'shipped',
-	'delivered',
-	'cancelled',
-])
+const log = logger.child({ layer: 'orders.service' })
+
+/**
+ * Target status → statuses it may come from. pending → paid is missing on
+ * purpose: only the order.placed consumer moves an order there.
+ */
+const MANUAL_TRANSITIONS: Readonly<
+	Partial<Record<OrderStatus, readonly OrderStatus[]>>
+> = {
+	cancelled: ['pending', 'paid'],
+	shipped: ['paid'],
+	delivered: ['shipped'],
+}
+
+function isManualTarget(status: string): status is OrderStatus {
+	return Object.prototype.hasOwnProperty.call(MANUAL_TRANSITIONS, status)
+}
+
+const DEFAULT_PAGE_SIZE = 20
 
 export function canonicalOrderId(id: string): string {
 	const match = /^order-(\d+)$/.exec(id)
@@ -47,23 +62,49 @@ export class OrdersService {
 		private readonly dataSource: DataSource,
 		private readonly orderEvents: OrderEventsService,
 		private readonly ratings: RatingQueueService,
+		private readonly orderRows: OrderRepository,
+		private readonly faults: FaultInjection,
 	) {}
 
 	async list(caller: AuthUser, limit?: number, cursor?: string) {
-		let filtered = [...this.store.orders.values()]
-
-		if (caller.role !== 'admin') {
-			const me = await publicUserIdOf(this.dataSource, caller.id)
-			filtered = filtered.filter((o) =>
-				caller.role === 'buyer' ? o.buyer_id === me : o.seller_id === me,
-			)
+		const pageSize = limit ?? DEFAULT_PAGE_SIZE
+		const { rows, hasMore } = await this.orderRows.findPage({
+			buyerId: caller.role === 'buyer' ? caller.id : undefined,
+			sellerId: caller.role === 'seller' ? caller.id : undefined,
+			limit: pageSize,
+			beforeId: cursor ? this.parseCursor(cursor) : undefined,
+		})
+		const items = rows.flatMap((row) => {
+			const seller = row.items[0]?.product?.seller
+			return row.user && seller ? [this.toApiOrder(row, seller)] : []
+		})
+		const last = items[items.length - 1]
+		return {
+			items,
+			next_cursor: hasMore && last ? last.id : null,
 		}
-
-		return this.store.paginate(filtered, limit, cursor)
 	}
 
-	async getById(id: string, caller: AuthUser): Promise<Order> {
+	private parseCursor(cursor: string): string {
+		const dbId = /^order-(\d+)$/.exec(cursor)?.[1]
+		if (!dbId) {
+			throw new ProblemException(
+				400,
+				'https://marketplace.local/problems/invalid-cursor',
+				'Invalid cursor',
+				'cursor must be a next_cursor value from a previous page',
+				'/v1/orders',
+			)
+		}
+		return dbId
+	}
+
+	async getById(id: string, caller: AuthUser, fault?: Fault): Promise<Order> {
+		log.debug({ orderId: id }, 'reading order')
 		const { order } = await this.loadAuthorizedOrder(id, caller)
+		if (fault) {
+			await this.faults.apply(fault)
+		}
 		return order
 	}
 
@@ -80,29 +121,40 @@ export class OrdersService {
 		caller: AuthUser,
 		status: string,
 	): Promise<{ id: string; status: string }> {
-		if (!ALLOWED_STATUSES.has(status)) {
+		const instance = `/v1/orders/${id}/status`
+		if (!isManualTarget(status)) {
 			throw new ProblemException(
 				400,
 				'https://marketplace.local/problems/invalid-status',
 				'Invalid status',
-				`Status must be one of: ${[...ALLOWED_STATUSES].join(', ')}`,
-				`/orders/${id}/status`,
+				`Status must be one of: ${Object.keys(MANUAL_TRANSITIONS).join(', ')}`,
+				instance,
 			)
 		}
 
 		const { canonicalId, row } = await this.loadAuthorizedOrder(
 			id,
 			caller,
-			`/orders/${id}/status`,
+			instance,
 		)
 
-		await this.dataSource.transaction(async (manager) => {
-			await manager.query(`UPDATE orders SET status = $1 WHERE id = $2`, [
-				status,
-				row.id,
-			])
-		})
+		const allowedFrom = MANUAL_TRANSITIONS[status] ?? []
+		const changed = await this.orderRows.transitionStatus(
+			row.id,
+			status,
+			allowedFrom,
+		)
+		if (!changed) {
+			throw new ProblemException(
+				409,
+				'https://marketplace.local/problems/invalid-transition',
+				'Invalid status transition',
+				`Order cannot move to ${status} from ${row.status}`,
+				instance,
+			)
+		}
 
+		log.info({ orderId: canonicalId, status }, 'order status updated')
 		this.orderEvents.publish(canonicalId, status)
 		return { id: canonicalId, status }
 	}
@@ -111,7 +163,9 @@ export class OrdersService {
 		caller: AuthUser,
 		idempotencyKey: string,
 		body: { items: Array<{ listing_id: string; quantity: number }> },
+		fault?: Fault,
 	): Promise<{ order: Order; location: string; replay: boolean }> {
+		log.debug({ items: body.items.length }, 'placing order')
 		const bodyHash = this.store.hashBody(body)
 		const cacheKey = `${caller.id}:${idempotencyKey}`
 		const cached = this.store.idempotencyStore.get(cacheKey)
@@ -209,6 +263,7 @@ export class OrdersService {
 				})),
 				idempotencyKey,
 				requestHash: bodyHash,
+				failAfterOutbox: fault?.fail,
 			})
 		} catch (err: unknown) {
 			if (err instanceof IdempotencyKeyConflictError) {
@@ -275,9 +330,8 @@ export class OrdersService {
 			seller_id: sellerId as string,
 			items: orderItems,
 			total_cents: result.totalCents,
-			status: 'paid',
+			status: 'pending',
 		}
-		this.store.orders.set(id, order)
 		this.ratings.enqueueRecalcInBackground(
 			result.orderId,
 			resolved.map((item) => item.productId),
@@ -307,20 +361,7 @@ export class OrdersService {
 		row: OrderRow
 	}> {
 		const instance = instancePath ?? `/v1/orders/${id}`
-		const dbId = toDbOrderId(id)
-		const rows = await this.dataSource
-			.getRepository(OrderRow)
-			.createQueryBuilder('ord')
-			.leftJoinAndSelect('ord.user', 'buyer')
-			.leftJoinAndSelect('ord.items', 'item')
-			.leftJoinAndSelect('item.product', 'product')
-			.leftJoinAndSelect('product.seller', 'seller')
-			.where('CAST(ord.id AS text) = :dbId', { dbId })
-			.getMany()
-		const row = rows[0]
-		row?.items?.sort((left, right) =>
-			left.id < right.id ? -1 : left.id > right.id ? 1 : 0,
-		)
+		const row = await this.orderRows.findWithItems(toDbOrderId(id))
 
 		const seller = row?.items[0]?.product?.seller
 		if (!row?.user || !row.items?.length || !seller) {
@@ -352,10 +393,6 @@ export class OrdersService {
 	}
 
 	private toApiOrder(row: OrderRow, seller: User): Order {
-		const status: Order['status'] =
-			row.status === 'paid' || row.status === 'cancelled'
-				? row.status
-				: 'created'
 		return {
 			id: `order-${row.id}`,
 			buyer_id: publicUserId(row.user.email),
@@ -366,7 +403,7 @@ export class OrdersService {
 				price_cents: item.unitPriceCents,
 			})),
 			total_cents: row.totalCents,
-			status,
+			status: row.status,
 		}
 	}
 

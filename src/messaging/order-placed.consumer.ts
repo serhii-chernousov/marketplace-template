@@ -3,6 +3,7 @@ import { readPgCode } from '../common/with-retry'
 import { EffectStore } from './effect-store'
 import { OrderPlacedEvent } from './order-placed.event'
 import { ORDER_PLACED_QUEUE } from './topology'
+import { logger } from '../observability/logger'
 
 export interface ConsumerHandle {
 	connection: ChannelModel
@@ -80,6 +81,7 @@ export async function startOrderPlacedConsumer(
 	connection: ChannelModel,
 	channel: Channel,
 	store: EffectStore,
+	onApplied?: (event: OrderPlacedEvent) => void,
 ): Promise<ConsumerHandle> {
 	const crashBeforeAck = process.env.CRASH_BEFORE_ACK === '1'
 	const handle: ConsumerHandle = {
@@ -118,8 +120,11 @@ export async function startOrderPlacedConsumer(
 
 				channel.ack(msg)
 				await store.markAcked(event.eventId)
+				if (applied) {
+					onApplied?.(event)
+				}
 			} catch (err) {
-				console.error('order.placed consumer error', err)
+				logger.error({ err }, 'order.placed consumer error')
 				if (isTransientConsumerError(err)) {
 					channel.nack(msg, false, true)
 					return

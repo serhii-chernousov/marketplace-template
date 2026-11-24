@@ -1,3 +1,4 @@
+import { shutdownTelemetry } from './observability/otel'
 import 'reflect-metadata'
 import type { Server } from 'http'
 import { NestFactory } from '@nestjs/core'
@@ -9,9 +10,12 @@ import { sleep } from './common/sleep'
 import { assertSchemaUpToDate } from './database/schema-check'
 import { ReadinessState } from './health/readiness'
 import { connectRedisClients } from './redis/redis.module'
+import { logger } from './observability/logger'
+import { PinoNestLogger } from './observability/nest-logger'
 
 async function bootstrap() {
-	const app = await NestFactory.create(AppModule)
+	const app = await NestFactory.create(AppModule, { bufferLogs: true })
+	app.useLogger(new PinoNestLogger())
 	configureApp(app)
 	const config = app.get(ConfigService<Env, true>)
 	const readiness = app.get(ReadinessState)
@@ -23,7 +27,7 @@ async function bootstrap() {
 	const port = config.get('PORT', { infer: true })
 	await app.listen(port)
 	readiness.markReady()
-	console.log(`Marketplace API listening on http://localhost:${port}`)
+	logger.info({ port }, 'marketplace api listening')
 
 	process.once('SIGTERM', () => {
 		void (async () => {
@@ -38,12 +42,13 @@ async function bootstrap() {
 				config.get('SHUTDOWN_TIMEOUT_MS', { infer: true }),
 			).unref()
 			await app.close()
+			await shutdownTelemetry()
 			process.exit(0)
 		})()
 	})
 }
 
 bootstrap().catch((err: unknown) => {
-	console.error(err)
+	logger.fatal({ err }, 'bootstrap failed')
 	process.exit(1)
 })

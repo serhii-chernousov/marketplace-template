@@ -3,9 +3,7 @@ import { connect, Channel, ChannelModel, ConfirmChannel } from 'amqplib'
 export function requireBrokerUrl(): string {
 	const url = process.env.BROKER_URL?.trim()
 	if (!url) {
-		throw new Error(
-			'BROKER_URL is required (Infisical or SKIP_VAULT=1 export)',
-		)
+		throw new Error('BROKER_URL is required (Infisical or SKIP_VAULT=1 export)')
 	}
 	return url
 }

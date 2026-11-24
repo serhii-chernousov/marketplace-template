@@ -55,7 +55,7 @@ describe('Orders E2E', () => {
 
 		expect(created.body.buyer_id).toBe('buyer-1')
 		expect(created.body.seller_id).toBe('seller-1')
-		expect(created.body.status).toBe('paid')
+		expect(created.body.status).toBe('pending')
 		expect(created.body.total_cents).toBe(4599)
 		expect(created.body.items).toEqual([
 			{ listing_id: 'listing-1', quantity: 1, price_cents: 4599 },

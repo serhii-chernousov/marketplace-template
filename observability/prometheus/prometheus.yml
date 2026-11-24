@@ -1,0 +1,15 @@
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  # api:3000 — the compose service; host 3000 — npm start; 3411-3413 — demo:logs / demo:metrics / demo:trace
+  - job_name: marketplace-api
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - api:3000
+          - host.docker.internal:3000
+          - host.docker.internal:3411
+          - host.docker.internal:3412
+          - host.docker.internal:3413

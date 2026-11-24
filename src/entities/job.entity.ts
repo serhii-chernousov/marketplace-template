@@ -1,9 +1,4 @@
-import {
-	Check,
-	Column,
-	Entity,
-	PrimaryGeneratedColumn,
-} from 'typeorm'
+import { Check, Column, Entity, PrimaryGeneratedColumn } from 'typeorm'
 
 export type JobStatus = 'pending' | 'done'
 

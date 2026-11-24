@@ -8,7 +8,7 @@ import { APP_GUARD } from '@nestjs/core'
 import * as OpenApiValidator from 'express-openapi-validator'
 import { join } from 'path'
 import { ConfigModule } from '@nestjs/config'
-import { validateApiEnv } from './config/env.schema'
+import { configEnvFiles, validateApiEnv } from './config/env.schema'
 import { AuthModule } from './auth/auth.module'
 import { JwtAuthGuard } from './auth/jwt-auth.guard'
 import { RolesGuard } from './auth/roles.guard'
@@ -16,6 +16,8 @@ import { CatalogModule } from './catalog/catalog.module'
 import { CheckoutModule } from './checkout/checkout.module'
 import { DatabaseModule } from './database/database.module'
 import { HealthModule } from './health/health.module'
+import { MessagingModule } from './messaging/messaging.module'
+import { MetricsController } from './observability/metrics.controller'
 import { JobsModule } from './jobs/jobs.module'
 import { ListingsModule } from './listings/listings.module'
 import { OrdersModule } from './orders/orders.module'
@@ -31,7 +33,7 @@ import { UploadsModule } from './uploads/uploads.module'
 		ConfigModule.forRoot({
 			isGlobal: true,
 			validate: validateApiEnv,
-			envFilePath: '.env',
+			envFilePath: configEnvFiles(),
 		}),
 		DatabaseModule,
 		RedisModule,
@@ -44,10 +46,12 @@ import { UploadsModule } from './uploads/uploads.module'
 		JobsModule,
 		ListingsModule,
 		OrdersModule,
+		MessagingModule,
 		CatalogModule,
 		UploadsModule,
 		HealthModule,
 	],
+	controllers: [MetricsController],
 	// AppModule is scanned before its imports, so these run before RateLimitGuard and it can key by req.user.
 	providers: [
 		{ provide: APP_GUARD, useClass: JwtAuthGuard },
@@ -62,7 +66,7 @@ export class AppModule implements NestModule {
 					apiSpec: join(process.cwd(), 'openapi', 'openapi.yaml'),
 					validateRequests: true,
 					validateResponses: true,
-					ignorePaths: /\/orders\/[^/]+\/(events|status)$|^\/socket\.io/,
+					ignorePaths: /\/orders\/[^/]+\/events$|^\/socket\.io/,
 				}),
 			)
 			.exclude(
@@ -70,6 +74,7 @@ export class AppModule implements NestModule {
 				{ path: 'healthz', method: RequestMethod.GET },
 				{ path: 'readyz', method: RequestMethod.GET },
 				{ path: 'db', method: RequestMethod.GET },
+				{ path: 'metrics', method: RequestMethod.GET },
 			)
 			.forRoutes('*')
 	}

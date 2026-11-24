@@ -26,10 +26,7 @@ async function main(): Promise<void> {
 		const product = await productRepo.findOneByOrFail({
 			name: RACE_PRODUCT_NAME,
 		})
-		await productRepo.update(
-			{ id: product.id },
-			{ stock: START_STOCK },
-		)
+		await productRepo.update({ id: product.id }, { stock: START_STOCK })
 
 		const buyers = await ds.getRepository(User).find({
 			where: { role: 'buyer' },
@@ -40,9 +37,7 @@ async function main(): Promise<void> {
 		}
 
 		const minBalance = START_STOCK * product.priceCents
-		const shortBuyer = buyers.find(
-			(buyer) => buyer.balanceCents < minBalance,
-		)
+		const shortBuyer = buyers.find((buyer) => buyer.balanceCents < minBalance)
 		if (shortBuyer) {
 			throw new Error(
 				`Buyer ${shortBuyer.email} balance_cents=${shortBuyer.balanceCents} ` +
@@ -71,9 +66,7 @@ async function main(): Promise<void> {
 
 		const successes = attempts.filter((result) => result === 'ok').length
 		const stockRows = asRows<{ stock: number }>(
-			await ds.query(`SELECT stock FROM products WHERE id = $1`, [
-				productId,
-			]),
+			await ds.query(`SELECT stock FROM products WHERE id = $1`, [productId]),
 		)
 		const finalStock = Number(stockRows[0].stock)
 		const negativeRows = asRows<{ n: string }>(

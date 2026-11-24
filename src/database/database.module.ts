@@ -1,9 +1,4 @@
-import {
-	Global,
-	Injectable,
-	Module,
-	OnModuleDestroy,
-} from '@nestjs/common'
+import { Global, Injectable, Module, OnModuleDestroy } from '@nestjs/common'
 import { ConfigService } from '@nestjs/config'
 import { DataSource } from 'typeorm'
 import type { Env } from '../config/env.schema'

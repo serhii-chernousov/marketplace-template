@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common'
 import { createHash, randomUUID } from 'crypto'
+import type { OrderStatus } from '../entities/order.entity'
 
 export interface Listing {
 	id: string
@@ -22,7 +23,7 @@ export interface Order {
 	seller_id: string
 	items: OrderItem[]
 	total_cents: number
-	status: 'created' | 'paid' | 'cancelled'
+	status: OrderStatus
 }
 
 interface IdempotencyRecord {
@@ -38,7 +39,6 @@ interface IdempotencyRecord {
 @Injectable()
 export class StoreService {
 	readonly listings = new Map<string, Listing>()
-	readonly orders = new Map<string, Order>()
 	readonly idempotencyStore = new Map<string, IdempotencyRecord>()
 
 	constructor() {

@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { Pool } from 'pg'
 import type { Env } from '../config/env.schema'
+import { logger } from '../observability/logger'
 
 /**
  * Lightweight pg.Pool for /db health (ДЗ #11 password-file pattern).
@@ -31,7 +32,7 @@ export class DbService implements OnModuleDestroy {
 		})
 
 		this.pool.on('error', (err) => {
-			console.error(err.message)
+			logger.error({ err }, 'pg pool error')
 		})
 	}
 

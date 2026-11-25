@@ -27,3 +27,6 @@ infra/Pulumi.*.yaml
 
 # Private defense notes
 defense/
+# HW31 stacks use the Pulumi Cloud secrets provider: no encryptionsalt, safe to commit
+!infra/base/Pulumi.base.yaml
+!infra/demo/Pulumi.demo.yaml

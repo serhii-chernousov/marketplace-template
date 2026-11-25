@@ -1,0 +1,7 @@
+name: hw31-base
+description: 'Always-on, zero-hourly-cost layer: budget, VPC, security groups, CI identity.'
+runtime:
+  name: nodejs
+  options:
+    packagemanager: npm
+main: index.ts

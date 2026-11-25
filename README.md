@@ -1212,7 +1212,7 @@ status=500 spans=45 orphan-spans=0 trace-matches-header=1 trace-matches-log=1 sp
 ## AWS
 
 смуга: основна
-teardown-run: TODO — посилання на dispatch-прогін teardown зʼявиться після здачі
+teardown-run: https://github.com/serhii-chernousov/marketplace-template/actions/runs/45659072423
 регіон: eu-central-1
 акаунт: акаунт AWS існував раніше — Free plan недоступний, плачу живими грошима з першої хвилини; захист — бюджет і нічний teardown.
 

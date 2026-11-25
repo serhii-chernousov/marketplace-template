@@ -20,8 +20,8 @@
             },
             "StringLike": {
               "token.actions.githubusercontent.com:sub": [
-                "repo:serhii-chernousov/marketplace-template:ref:refs/heads/main",
-                "repo:serhii-chernousov/marketplace-template:ref:refs/heads/hw-31"
+                "repo:serhii-chernousov@198785733/marketplace-template@1347460702:ref:refs/heads/main",
+                "repo:serhii-chernousov@198785733/marketplace-template@1347460702:ref:refs/heads/hw-31"
               ]
             }
           }

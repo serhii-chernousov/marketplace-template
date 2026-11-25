@@ -5,7 +5,7 @@ config:
       Project: nodejs-pro-hw31
       Stack: base
       ManagedBy: pulumi
-  hw31-base:githubRepo: serhii-chernousov/marketplace-template
+  hw31-base:githubRepoSubject: serhii-chernousov@198785733/marketplace-template@1347460702
   hw31-base:ciBranches:
     - main
     - hw-31

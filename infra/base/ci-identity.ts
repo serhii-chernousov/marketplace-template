@@ -6,7 +6,9 @@ const GITHUB_ISSUER = 'token.actions.githubusercontent.com'
 export const CI_ROLE_NAME = 'hw31-teardown'
 
 const config = new pulumi.Config()
-const repo = config.require('githubRepo')
+// GitHub issues `sub` as repo:<owner>@<owner id>/<repo>@<repo id>:...; the ids
+// survive renames, so a recreated repo with the same name cannot assume the role.
+const repoSubject = config.require('githubRepoSubject')
 const branches = config.requireObject<string[]>('ciBranches')
 
 const account = aws.getCallerIdentityOutput().accountId
@@ -34,7 +36,7 @@ export const ciRole = new aws.iam.Role('teardown', {
 					StringEquals: { [`${GITHUB_ISSUER}:aud`]: 'sts.amazonaws.com' },
 					StringLike: {
 						[`${GITHUB_ISSUER}:sub`]: branches.map(
-							(branch) => `repo:${repo}:ref:refs/heads/${branch}`,
+							(branch) => `repo:${repoSubject}:ref:refs/heads/${branch}`,
 						),
 					},
 				},

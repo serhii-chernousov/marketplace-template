@@ -1260,7 +1260,7 @@ TODO: звір кожен рядок із прайс-листом AWS сам і 
 
 ### Ключі: де їх немає
 
-- Конвеєр: жодного довгоживучого ключа. `aws-actions/configure-aws-credentials` бере OIDC-токен GitHub (`id-token: write`) і обмінює його на STS-креденшели ролі `hw31-teardown`. Trust policy: `aud = sts.amazonaws.com`, `sub` звужений до `repo:serhii-chernousov/marketplace-template:ref:refs/heads/{main,hw-31}` (`main` — для cron, `hw-31` — для dispatch-прогону). ARN ролі і org Pulumi — repository variables, а не secrets: вони не секретні.
+- Конвеєр: жодного довгоживучого ключа. `aws-actions/configure-aws-credentials` бере OIDC-токен GitHub (`id-token: write`) і обмінює його на STS-креденшели ролі `hw31-teardown`. Trust policy: `aud = sts.amazonaws.com`, `sub` звужений до `repo:serhii-chernousov@198785733/marketplace-template@1347460702:ref:refs/heads/{main,hw-31}` (`main` — для cron, `hw-31` — для dispatch-прогону). Формат із числовими ID власника і репозиторію — те, що GitHub реально кладе в токен (перший прогін упав з `AccessDenied`, справжній `sub` видно в CloudTrail-події `AssumeRoleWithWebIdentity`). ID не змінюються при перейменуванні, тож репозиторій, створений заново з тим самим імʼям, роль не отримає. ARN ролі і org Pulumi — repository variables, а не secrets: вони не секретні.
 - Локально: ключі IAM-користувача оператора приїжджають зі сховища ДЗ #11 через ту саму обгортку `scripts/with-secrets.sh`. `aws configure` не виконувався.
 
 ### IAM: кожен дозвіл ролі teardown

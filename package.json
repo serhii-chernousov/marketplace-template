@@ -68,7 +68,8 @@
     "demo:alb": "bash scripts/with-secrets.sh dev bash demo/aws-alb.sh",
     "demo:nat": "bash scripts/with-secrets.sh dev bash demo/aws-nat.sh",
     "evidence:base": "bash scripts/with-secrets.sh dev bash scripts/aws/evidence-base.sh",
-    "evidence:iam": "bash scripts/with-secrets.sh dev bash scripts/aws/evidence-iam.sh"
+    "evidence:iam": "bash scripts/with-secrets.sh dev bash scripts/aws/evidence-iam.sh",
+    "evidence:prices": "bash scripts/with-secrets.sh dev bash scripts/aws/prices.sh"
   },
   "engines": {
     "node": ">=18"

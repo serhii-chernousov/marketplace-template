@@ -76,7 +76,7 @@ jobs:
           set -euo pipefail
 
           state=$(pulumi stack export --stack "$DEMO_STACK" \
-            | jq '[.deployment.resources[]|select(.type|startswith("aws:"))]|length')
+            | jq '[.deployment.resources[]?|select(.type|startswith("aws:"))]|length')
 
           tagged_in() {
             aws resourcegroupstaggingapi get-resources --region "$1" \

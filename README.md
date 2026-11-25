@@ -1306,6 +1306,8 @@ TODO: встав сюди обидва прогони `simulate-principal-policy
 
 Заміряно після `up:base` (25.11.2026): `resourcegroupstaggingapi` у `us-east-1` бачить OIDC-провайдер і бюджет (IAM-роль — ні), тобто запобіжники рахувалися б як хвіст. Тому на них трьох тег `Project` перевизначено на `nodejs-pro-hw31-guard` (`infra/base/guard.ts`), а `Stack` і `ManagedBy` лишаються. Після цього `tagged-resources-us-east-1=0`, а в `eu-central-1` по тегу видно всю мережу `base` (`tagged-resources` у `evidence/base.txt`).
 
+Ще один хвіст, якого немає ні в стані Pulumi, ні в AWS: перший `CreateSubnet` для `public-1` упав з `RequestLimitExceeded` (видно в CloudTrail), провайдер повторив запит, а індекс тегів запамʼятав ID невдалої спроби (`subnet-0c432a…`). Такої підмережі не існувало (`InvalidSubnetID.NotFound`), але `get-resources` рахував її ще годину. Знято `untag-resources` по її ARN — саме тому контракт знесення питає і стан, і індекс тегів: розходження двох джерел правди і є хвіст.
+
 ### Заміри
 
 TODO: впиши числа з `evidence/demos.txt` після живого прогону.

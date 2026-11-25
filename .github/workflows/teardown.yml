@@ -1,0 +1,109 @@
+name: teardown
+
+on:
+  schedule:
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: 'demo: hourly stack only. network: also the base VPC (budget and this CI role stay).'
+        type: choice
+        options: [network, demo]
+        default: network
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: teardown
+  cancel-in-progress: false
+
+jobs:
+  teardown:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    env:
+      SCOPE: ${{ inputs.scope || 'demo' }}
+      DEMO_STACK: ${{ vars.PULUMI_ORG }}/hw31-demo/demo
+      BASE_STACK: ${{ vars.PULUMI_ORG }}/hw31-base/base
+      PULUMI_SKIP_UPDATE_CHECK: 'true'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+
+      - name: AWS credentials via OIDC (no stored keys)
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_TEARDOWN_ROLE_ARN }}
+          role-session-name: teardown-${{ github.run_id }}
+          aws-region: eu-central-1
+
+      - name: Pulumi Cloud token via OIDC (no stored token)
+        uses: pulumi/auth-actions@273044cc19e63ea565285da8edd4e059126a0bdb # v2.1.2
+        with:
+          organization: ${{ vars.PULUMI_ORG }}
+          requested-token-type: urn:pulumi:token-type:access_token:personal
+          scope: user:${{ vars.PULUMI_USER }}
+
+      - name: Install Pulumi CLI
+        uses: pulumi/actions@0ce33695f880624d4f27bd6db25e680c7df4d551 # v7.2.0
+        with:
+          pulumi-version: 3.276.0
+
+      - name: pulumi destroy (demo)
+        working-directory: infra/demo
+        run: |
+          npm ci --no-audit --no-fund
+          pulumi stack select "$DEMO_STACK" --create --non-interactive
+          pulumi destroy --yes --non-interactive --stack "$DEMO_STACK"
+
+      - name: pulumi destroy (base network; budget and CI identity stay)
+        if: env.SCOPE == 'network'
+        working-directory: infra/base
+        run: |
+          npm ci --no-audit --no-fund
+          pulumi destroy --yes --non-interactive --stack "$BASE_STACK" \
+            --target 'urn:pulumi:base::hw31-base::aws:ec2/**' \
+            --target 'urn:pulumi:base::hw31-base::aws:vpc/**' \
+            --target-dependents
+
+      - name: Six emptiness checks (eu-central-1 and us-east-1)
+        if: always()
+        run: |
+          set -euo pipefail
+
+          state=$(pulumi stack export --stack "$DEMO_STACK" \
+            | jq '[.deployment.resources[]|select(.type|startswith("aws:"))]|length')
+
+          tagged_in() {
+            aws resourcegroupstaggingapi get-resources --region "$1" \
+              --tag-filters Key=Project,Values=nodejs-pro-hw31 --query 'length(ResourceTagMappingList)'
+          }
+
+          tagged=0 rds=0 alb=0 nat=0 eip=0
+          for R in eu-central-1 us-east-1; do
+            # The tagging index lags behind deletes; give it a few minutes to catch up.
+            t=$(tagged_in "$R")
+            for _ in $(seq 1 12); do
+              [ "$t" -eq 0 ] && break
+              sleep 30
+              t=$(tagged_in "$R")
+            done
+            r=$(aws rds describe-db-instances --region "$R" --query 'length(DBInstances)')
+            a=$(aws elbv2 describe-load-balancers --region "$R" --query 'length(LoadBalancers)')
+            n=$(aws ec2 describe-nat-gateways --region "$R" --filter Name=state,Values=available \
+                                              --query 'length(NatGateways)')
+            e=$(aws ec2 describe-addresses   --region "$R" --query 'length(Addresses)')
+            echo "region $R: tagged=$t rds=$r alb=$a nat=$n eip=$e"
+            tagged=$((tagged + t)) rds=$((rds + r)) alb=$((alb + a)) nat=$((nat + n)) eip=$((eip + e))
+          done
+
+          echo "state-resources-left=$state"
+          echo "tagged-resources-left=$tagged"
+          echo "rds-left=$rds"
+          echo "alb-left=$alb"
+          echo "nat-left=$nat"
+          echo "eip-left=$eip"

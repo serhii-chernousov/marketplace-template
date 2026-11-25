@@ -1310,11 +1310,13 @@ TODO: встав сюди обидва прогони `simulate-principal-policy
 
 ### Заміри
 
-TODO: впиши числа з `evidence/demos.txt` після живого прогону.
+Живий прогін 25.11.2026, `evidence/demos.txt`. `up:demo` — 15 хв, з них RDS Multi-AZ — 14 хв 49 с.
 
-- Failover: AZ `TODO` → `TODO` за `TODO` с (за подіями RDS, `describe-events`), подія: «TODO». Офіційно «typically 60–120 seconds»; якщо виліз за межі — окремий рядок тут. `--force-failover` — керований перемикач: я міряю процедуру, а не інцидент. Сам failover рядка в рахунку не додає: standby уже оплачений у ціні Multi-AZ.
-- ALB: `http-code=TODO`, `target-state=TODO`. `target-state` головніший за код: нездорова ціль дає 503.
-- NAT: жив `TODO` хв, сплачено `TODO` год. «Each partial NAT Gateway-hour consumed is billed as a full hour.» Вправа — $0,057, той самий NAT у проді — ≈ $41/міс за кожну AZ разом з його IPv4.
+- Failover: AZ `eu-central-1a` → `eu-central-1b` за 44 с (між подіями RDS «failover started» і «failover completed»; від виклику до `available` — 70 с), подія: «Multi-AZ instance failover completed». `--force-failover` — керований перемикач: я міряю процедуру, а не інцидент. Сам failover рядка в рахунку не додає: standby уже оплачений у ціні Multi-AZ.
+- 44 с — менше за офіційні «typically 60–120 seconds»: на порожній базі без навантаження standby нічого доганяти.
+- Перша спроба (за кілька хвилин до цієї) дала подію «Multi-AZ instance failover completed» за 48 с, але `AvailabilityZone` у `describe-db-instances` лишилась `eu-central-1a` і не змінилась за 6 хвилин спостереження. Подія сама по собі не доводить перемикання — тому критерій читає AZ, а не текст події. Друга спроба перемкнула AZ, у `evidence/demos.txt` — вона.
+- ALB: `http-code=200`, `target-state=healthy` (ціль — Lambda, health check `/health`). `target-state` головніший за код: нездорова ціль дає 503.
+- NAT: жив 3 хв, сплачено 1 год. «Each partial NAT Gateway-hour consumed is billed as a full hour.» Вправа — $0,057, той самий NAT у проді — ≈ $41/міс за кожну AZ разом з його IPv4.
 
 ### RDS Multi-AZ проти мого стека з #15
 

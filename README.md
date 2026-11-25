@@ -1214,6 +1214,7 @@ status=500 spans=45 orphan-spans=0 trace-matches-header=1 trace-matches-log=1 sp
 смуга: основна
 teardown-run: TODO — посилання на dispatch-прогін teardown зʼявиться після здачі
 регіон: eu-central-1
+акаунт: акаунт AWS існував раніше — Free plan недоступний, плачу живими грошима з першої хвилини; захист — бюджет і нічний teardown.
 
 Програми: `infra/base`, `infra/demo` (кожна — окремий npm-пакет зі своїм `package-lock.json`). Обовʼязкові npm-скрипти (`up:base`, `up:demo`, `destroy:demo`, `destroy:base`, `demo:failover`, `demo:nat`, `demo:alb`) лежать у кореневому `package.json`, а не в `infra/*/package.json`.
 
@@ -1303,7 +1304,7 @@ TODO: встав сюди обидва прогони `simulate-principal-policy
 
 Чому в dispatch є `scope=network`. Обидва стеки мають тег `Project=nodejs-pro-hw31`, тож поки живе VPC з `base`, `tagged-resources-left` чесно не дорівнює нулю. Знести `base` повністю з тієї ж джоби не можна: разом із ним зникне OIDC-роль, під якою джоба працює, і перевірки отримають AccessDenied. Тому здавальний прогін зносить `demo` і всю мережу `base` (`--target` по `aws:ec2/**` і `aws:vpc/**`), а лишає тільки запобіжники, які коштують $0: бюджет, OIDC-провайдер і роль. `state-resources-left` рахується по стеку `demo`. Після перевірки ДЗ `npm run destroy:base` зносить і їх — роль із правом знесення не має жити довше за курс.
 
-TODO: заміряй після `up:base`, чи бачить `resourcegroupstaggingapi` бюджет і роль у `us-east-1` (`tagged-resources-us-east-1` у `evidence/base.txt`), і допиши сюди результат.
+Заміряно після `up:base` (25.11.2026): `resourcegroupstaggingapi` у `us-east-1` бачить OIDC-провайдер і бюджет (IAM-роль — ні), тобто запобіжники рахувалися б як хвіст. Тому на них трьох тег `Project` перевизначено на `nodejs-pro-hw31-guard` (`infra/base/guard.ts`), а `Stack` і `ManagedBy` лишаються. Після цього `tagged-resources-us-east-1=0`, а в `eu-central-1` по тегу видно всю мережу `base` (`tagged-resources` у `evidence/base.txt`).
 
 ### Заміри
 

@@ -1,0 +1,38 @@
+$ aws iam simulate-principal-policy --policy-source-arn arn:aws:iam::383905875072:role/hw31-teardown --action-names rds:DescribeDBInstances
+{
+    "EvaluationResults": [
+        {
+            "EvalActionName": "rds:DescribeDBInstances",
+            "EvalResourceName": "*",
+            "EvalDecision": "allowed",
+            "MatchedStatements": [
+                {
+                    "SourcePolicyId": "role_hw31-teardown_teardown",
+                    "SourcePolicyType": "IAM Policy",
+                    "StartPosition": {
+                        "Line": 1,
+                        "Column": 38
+                    },
+                    "EndPosition": {
+                        "Line": 1,
+                        "Column": 649
+                    }
+                }
+            ],
+            "MissingContextValues": []
+        }
+    ]
+}
+
+$ aws iam simulate-principal-policy --policy-source-arn arn:aws:iam::383905875072:role/hw31-teardown --action-names iam:CreateAccessKey
+{
+    "EvaluationResults": [
+        {
+            "EvalActionName": "iam:CreateAccessKey",
+            "EvalResourceName": "*",
+            "EvalDecision": "implicitDeny",
+            "MatchedStatements": [],
+            "MissingContextValues": []
+        }
+    ]
+}

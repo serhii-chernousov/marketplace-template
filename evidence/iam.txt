@@ -1,0 +1,4 @@
+sim-allowed-action=rds:DescribeDBInstances
+sim-allowed=allowed
+sim-denied-action=iam:CreateAccessKey
+sim-denied=implicitDeny

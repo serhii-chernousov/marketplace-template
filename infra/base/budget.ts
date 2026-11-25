@@ -1,6 +1,7 @@
 import * as aws from '@pulumi/aws'
 import * as pulumi from '@pulumi/pulumi'
 import { requireEnv } from './env'
+import { GUARD_TAGS } from './guard'
 
 const { BUDGET_EMAIL } = requireEnv(['BUDGET_EMAIL'])
 
@@ -9,6 +10,7 @@ export const budget = new aws.budgets.Budget('monthly-cap', {
 	timeUnit: 'MONTHLY',
 	limitAmount: '5',
 	limitUnit: 'USD',
+	tags: GUARD_TAGS,
 	notifications: [
 		{
 			notificationType: 'ACTUAL',

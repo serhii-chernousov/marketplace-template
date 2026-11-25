@@ -1,5 +1,6 @@
 import * as aws from '@pulumi/aws'
 import * as pulumi from '@pulumi/pulumi'
+import { GUARD_TAGS } from './guard'
 
 const GITHUB_ISSUER = 'token.actions.githubusercontent.com'
 export const CI_ROLE_NAME = 'hw31-teardown'
@@ -14,12 +15,14 @@ const region = aws.getRegionOutput().region
 const github = new aws.iam.OpenIdConnectProvider('github', {
 	url: `https://${GITHUB_ISSUER}`,
 	clientIdLists: ['sts.amazonaws.com'],
+	tags: GUARD_TAGS,
 })
 
 export const ciRole = new aws.iam.Role('teardown', {
 	name: CI_ROLE_NAME,
 	description: 'Assumed by the teardown GitHub Actions workflow via OIDC',
 	maxSessionDuration: 3600,
+	tags: GUARD_TAGS,
 	assumeRolePolicy: pulumi.jsonStringify({
 		Version: '2012-10-17',
 		Statement: [

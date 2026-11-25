@@ -1209,6 +1209,137 @@ status=500 spans=45 orphan-spans=0 trace-matches-header=1 trace-matches-log=1 sp
 - **SLO**: 99,5 % за 30 днів.
 - **Error budget**: 0,005 × 30 діб × 24 год × 60 хв = **216 хвилин** повної недоступності на місяць, або 0,5 % запитів.
 
+## AWS
+
+смуга: основна
+teardown-run: TODO — посилання на dispatch-прогін teardown зʼявиться після здачі
+регіон: eu-central-1
+
+Програми: `infra/base`, `infra/demo` (кожна — окремий npm-пакет зі своїм `package-lock.json`). Обовʼязкові npm-скрипти (`up:base`, `up:demo`, `destroy:demo`, `destroy:base`, `demo:failover`, `demo:nat`, `demo:alb`) лежать у кореневому `package.json`, а не в `infra/*/package.json`.
+
+Курсовий уперше стоїть на чужому платному залізі. Питання тут не «чи підніметься», а «чи знесеться так, що від нього нічого не лишиться». Тому знесення — частина коду, а доказ — шість нулів у лозі GitHub Actions, а не мій термінал.
+
+### Два стеки — два рахунки
+
+| Стек   | Що всередині                                                                                   | Скільки коштує                                        | Скільки живе                                    |
+| ------ | ---------------------------------------------------------------------------------------------- | ----------------------------------------------------- | ----------------------------------------------- |
+| `base` | бюджет, VPC, 2 публічні + 2 приватні підмережі у двох AZ, IGW, route tables, 3 SG, OIDC + роль | $0/год                                                | тиждень і більше; після здачі — `destroy:base`  |
+| `demo` | RDS PostgreSQL Multi-AZ, ALB + target group з Lambda, NAT за прапорцем `hw31:withNat`          | ≈ $0,082/год (див. таблицю), NAT ще +$0,057 за вправу | один вечір; щоночі о 02:00 UTC зносить teardown |
+
+Бюджет — перший ресурс: VPC має `dependsOn` на нього, тож у порожньому акаунті нічого не зʼявиться раніше за алерт. Ліміт $5/міс, лист на `ACTUAL > 20 %`. Це лист, а не гальмо: оновлення раз на 8–12 годин, тобто стек встигне намотати до $0,98 до першого листа. Зупиняють тут Free plan (з картки не можна списати) і `destroy`.
+
+Приватність перевіряється не назвою, а рядком маршруту: у приватних підмереж окрема route table без `0.0.0.0/0` (`private-default-route=0` у `evidence/base.txt`). NAT у `base` немає — у приватних підмережах живе тільки база, їй інтернет не потрібен.
+
+### Погодинна ставка
+
+TODO: звір кожен рядок із прайс-листом AWS сам і впиши дату, коли бачив сторінку. Числа нижче — зі знімка 24.08.2026, eu-central-1, місяць = 730 год.
+
+| Рядок                                 | Ставка                      | За 730 год    | Дата прайс-листа |
+| ------------------------------------- | --------------------------- | ------------- | ---------------- |
+| ALB                                   | $0,02700/год                | $19,71        | TODO             |
+| RDS db.t4g.micro PostgreSQL, Multi-AZ | $0,03700/год                | $27,01        | TODO             |
+| gp3 20 ГіБ, Multi-AZ                  | $0,274/ГіБ-міс × 20         | $5,48         | TODO             |
+| Public IPv4 × 2 (під ALB)             | $0,00500/год × 2            | $7,30         | TODO             |
+| LCU — припущення, не ставка           | навчальне навантаження      | $0,29         | —                |
+| Lambda-ціль                           | у межах безкоштовних квот   | ≈ $0          | TODO             |
+| **Разом**                             |                             | **$59,79**    |                  |
+| NAT Gateway + його IPv4 (лише вправа) | $0,052 + $0,005, 1 год мін. | $0,057 разово | TODO             |
+
+Похідні з одного числа: $59,79 ÷ 730 = $0,08191/год · × 4 год = $0,33 · × 24 год = $1,97/добу · $200 кредитів ÷ $1,97 = 101 доба. Змінився хоч один рядок — перераховую всі похідні.
+
+Три правила округлення: ALB і NAT білять партіальну годину як повну, RDS — посекундно з мінімумом 10 хвилин.
+
+### Бекенд стану: чим відрізняється від #28
+
+На #28 стан лежав у `file://.pulumi` з passphrase — це працює, поки все запускається з ноутбука. Тут знесення запускає воркер GitHub, який мого ноутбука не бачить, тому стан у Pulumi Cloud (individual, $0), secrets provider — `service`. Наслідки:
+
+- `Pulumi.base.yaml` і `Pulumi.demo.yaml` закомічені: `encryptionsalt` у них немає, а регіон і `aws:defaultTags` мають бути в git, а не в `~/.aws/config`.
+- Локально `pulumi login` не виконується: `scripts/pulumi-aws.sh` бере `PULUMI_ACCESS_TOKEN` і `PULUMI_ORG` зі сховища через `scripts/with-secrets.sh`, як і AWS-ключі оператора.
+- У CI токен Pulumi не зберігається: `pulumi/auth-actions` обмінює OIDC-токен GitHub на короткоживучий токен Pulumi.
+
+### Ключі: де їх немає
+
+- Конвеєр: жодного довгоживучого ключа. `aws-actions/configure-aws-credentials` бере OIDC-токен GitHub (`id-token: write`) і обмінює його на STS-креденшели ролі `hw31-teardown`. Trust policy: `aud = sts.amazonaws.com`, `sub` звужений до `repo:serhii-chernousov/marketplace-template:ref:refs/heads/{main,hw-31}` (`main` — для cron, `hw-31` — для dispatch-прогону). ARN ролі і org Pulumi — repository variables, а не secrets: вони не секретні.
+- Локально: ключі IAM-користувача оператора приїжджають зі сховища ДЗ #11 через ту саму обгортку `scripts/with-secrets.sh`. `aws configure` не виконувався.
+
+### IAM: кожен дозвіл ролі teardown
+
+Жодного `*` в `Action`. Describe/List-дії в IAM не мають resource-level дозволів, тому вони на `Resource: "*"`; усе, що видаляє, звужене до регіону й акаунта, а IAM — до префікса `hw31-demo-*`, щоб роль не могла видалити сама себе.
+
+| Дія                                                                                                      | Навіщо                                                                 |
+| -------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `tag:GetResources`                                                                                       | перевірка `tagged-resources-left`                                      |
+| `rds:DescribeDBInstances`                                                                                | Pulumi чекає, поки інстанс зникне; перевірка `rds-left`                |
+| `rds:DescribeDBSubnetGroups`                                                                             | Pulumi читає subnet group перед видаленням                             |
+| `rds:DeleteDBInstance`                                                                                   | знести RDS                                                             |
+| `rds:DeleteDBSubnetGroup`                                                                                | знести DB subnet group                                                 |
+| `elasticloadbalancing:DescribeLoadBalancers`                                                             | Pulumi чекає видалення ALB; перевірка `alb-left`                       |
+| `elasticloadbalancing:DescribeListeners`, `DescribeTargetGroups`, `DescribeTargetHealth`, `DescribeTags` | Pulumi читає listener, target group і реєстрацію цілі перед видаленням |
+| `elasticloadbalancing:DeleteListener`, `DeleteLoadBalancer`, `DeleteTargetGroup`                         | знести ALB, listener і target group                                    |
+| `elasticloadbalancing:DeregisterTargets`                                                                 | відвʼязати Lambda від target group                                     |
+| `lambda:GetFunction`, `lambda:GetPolicy`                                                                 | Pulumi читає функцію і її resource policy                              |
+| `lambda:DeleteFunction`, `lambda:RemovePermission`                                                       | знести функцію і дозвіл ALB її викликати                               |
+| `logs:DeleteLogGroup`                                                                                    | знести лог-групу функції (інакше лишиться хвіст поза стеком)           |
+| `iam:GetRole`, `ListRolePolicies`, `ListAttachedRolePolicies`, `ListInstanceProfilesForRole`             | Pulumi перевіряє, що в ролі Lambda нічого не лишилось                  |
+| `iam:DetachRolePolicy`, `DeleteRolePolicy`, `DeleteRole`                                                 | знести виконавчу роль Lambda (лише `role/hw31-demo-*`)                 |
+| `ec2:DescribeNatGateways`, `ec2:DescribeAddresses`                                                       | Pulumi чекає видалення NAT/EIP; перевірки `nat-left`, `eip-left`       |
+| `ec2:DeleteNatGateway`, `ec2:DisassociateAddress`, `ec2:ReleaseAddress`                                  | знести NAT і звільнити його Elastic IP                                 |
+| `ec2:DescribeVpcs`, `DescribeSubnets`, `DescribeRouteTables`, `DescribeInternetGateways`                 | Pulumi читає мережу `base` перед видаленням (`scope=network`)          |
+| `ec2:DescribeSecurityGroups`, `DescribeSecurityGroupRules`, `DescribeNetworkInterfaces`                  | Pulumi чекає, поки ENI балансувальника звільнять SG і підмережі        |
+| `ec2:DeleteRoute`, `DisassociateRouteTable`, `DeleteRouteTable`                                          | знести маршрути і route tables                                         |
+| `ec2:DetachInternetGateway`, `DeleteInternetGateway`                                                     | знести IGW                                                             |
+| `ec2:RevokeSecurityGroupIngress`, `RevokeSecurityGroupEgress`, `DeleteSecurityGroup`                     | знести правила і SG                                                    |
+| `ec2:DeleteSubnet`, `DeleteVpc`                                                                          | знести підмережі і VPC                                                 |
+
+Негативний тест на рушії, який ухвалює рішення (AWS, а не мій код), — `npm run evidence:iam`, повний вивід у `evidence/iam-simulate.log.txt`:
+
+TODO: встав сюди обидва прогони `simulate-principal-policy` з `evidence/iam-simulate.log.txt` (позитивний — `rds:DescribeDBInstances` → `allowed`, негативний — `iam:CreateAccessKey` → `implicitDeny`).
+
+Зелений тест доводить, що роль щось уміє; заборону доводить тільки негативний. І це одна дія проти одного принципала, а не «акаунт безпечний».
+
+### Знесення
+
+`.github/workflows/teardown.yml`: `schedule` о 02:00 UTC (зносить `demo`, коли я про нього забув) і `workflow_dispatch` (зносить зараз — цей прогін і здається). Порядок у джобі: `pulumi destroy` → `pulumi stack export | jq` → шість перевірок у `eu-central-1` і `us-east-1` → шість рядків контракту.
+
+Чому в dispatch є `scope=network`. Обидва стеки мають тег `Project=nodejs-pro-hw31`, тож поки живе VPC з `base`, `tagged-resources-left` чесно не дорівнює нулю. Знести `base` повністю з тієї ж джоби не можна: разом із ним зникне OIDC-роль, під якою джоба працює, і перевірки отримають AccessDenied. Тому здавальний прогін зносить `demo` і всю мережу `base` (`--target` по `aws:ec2/**` і `aws:vpc/**`), а лишає тільки запобіжники, які коштують $0: бюджет, OIDC-провайдер і роль. `state-resources-left` рахується по стеку `demo`. Після перевірки ДЗ `npm run destroy:base` зносить і їх — роль із правом знесення не має жити довше за курс.
+
+TODO: заміряй після `up:base`, чи бачить `resourcegroupstaggingapi` бюджет і роль у `us-east-1` (`tagged-resources-us-east-1` у `evidence/base.txt`), і допиши сюди результат.
+
+### Заміри
+
+TODO: впиши числа з `evidence/demos.txt` після живого прогону.
+
+- Failover: AZ `TODO` → `TODO` за `TODO` с (за подіями RDS, `describe-events`), подія: «TODO». Офіційно «typically 60–120 seconds»; якщо виліз за межі — окремий рядок тут. `--force-failover` — керований перемикач: я міряю процедуру, а не інцидент. Сам failover рядка в рахунку не додає: standby уже оплачений у ціні Multi-AZ.
+- ALB: `http-code=TODO`, `target-state=TODO`. `target-state` головніший за код: нездорова ціль дає 503.
+- NAT: жив `TODO` хв, сплачено `TODO` год. «Each partial NAT Gateway-hour consumed is billed as a full hour.» Вправа — $0,057, той самий NAT у проді — ≈ $41/міс за кожну AZ разом з його IPv4.
+
+### RDS Multi-AZ проти мого стека з #15
+
+Мій стек #15 — це один `postgres:16-alpine` + PgBouncer (`pool_mode = transaction`) + `scripts/backup.sh` (`pg_dump -Fc` за cron о 03:00) + `scripts/restore-drill.sh` (RTO 2 с, RPO 24 год у `RESTORE-DRILL.md`). Репліки в ньому не було.
+
+RDS Multi-AZ забирає на себе:
+
+- синхронний standby в іншій AZ і автоматичний failover на нього — те, чого в #15 не було взагалі;
+- автоматичні бекапи з point-in-time recovery замість cron + `pg_dump`: RPO падає з 24 годин до хвилин, хоча retention тут 1 день, а не тиждень;
+- шифрування диска (`aws/rds`), патчі minor-версій у вікні обслуговування, заміну заліза.
+
+Лишає мені:
+
+- пул зʼєднань: PgBouncer нікуди не дівається (RDS Proxy — окремий платний рядок);
+- міграції і сам `restore-drill.sh`: бекап, який ніхто не відновлював, не рахується, а RDS не відновлює його за мене в тестову базу;
+- читання з репліки: standby Multi-AZ instance читати не можна, read replica — окремий ресурс і окремий рядок рахунку;
+- ліміти зʼєднань і памʼять `db.t4g.micro`, розмір пулу і таймаути застосунку.
+
+### KMS
+
+`storageEncrypted: true` шифрує диск ключем `aws/rds` — AWS-managed, $0. KMS — не заміна сховищу секретів з #11, а шар під ним: envelope encryption, де KMS-ключ шифрує ключ даних (той самий `ENCRYPTION_KEY`), а сам ключ даних живе в Infisical. Власний customer-managed key я не створював: це $1/міс, і після `destroy` він не зникає того ж дня, а висить у pending deletion 7–30 днів — рядок рахунку, який переживає знесення.
+
+### Відомі обмеження
+
+- Ціль ALB — Lambda поза VPC, а не мій образ: критерій читає код відповіді і стан цілі, а EC2 додав би ще один погодинний рядок і ще одну Public IPv4.
+- Файли в `evidence/` пише моя машина — вони підробляються. Гейт — тільки прогін CI.
+- Цим ДЗ я не навчився масштабу (один `db.t4g.micro`, нуль трафіку) і FinOps — тільки не забувати зносити.
+
 ## Grading
 
 ### ДЗ #29 — Observability

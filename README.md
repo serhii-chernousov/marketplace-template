@@ -1294,7 +1294,23 @@ TODO: звір кожен рядок із прайс-листом AWS сам і 
 
 Негативний тест на рушії, який ухвалює рішення (AWS, а не мій код), — `npm run evidence:iam`, повний вивід у `evidence/iam-simulate.log.txt`:
 
-TODO: встав сюди обидва прогони `simulate-principal-policy` з `evidence/iam-simulate.log.txt` (позитивний — `rds:DescribeDBInstances` → `allowed`, негативний — `iam:CreateAccessKey` → `implicitDeny`).
+```text
+$ aws iam simulate-principal-policy --policy-source-arn arn:aws:iam::383905875072:role/hw31-teardown --action-names rds:DescribeDBInstances
+{
+  "EvalActionName": "rds:DescribeDBInstances",
+  "EvalResourceName": "*",
+  "EvalDecision": "allowed"
+}
+
+$ aws iam simulate-principal-policy --policy-source-arn arn:aws:iam::383905875072:role/hw31-teardown --action-names iam:CreateAccessKey
+{
+  "EvalActionName": "iam:CreateAccessKey",
+  "EvalResourceName": "*",
+  "EvalDecision": "implicitDeny"
+}
+```
+
+Повний JSON обох прогонів (з `MatchedStatements`) — у `evidence/iam-simulate.log.txt`.
 
 Зелений тест доводить, що роль щось уміє; заборону доводить тільки негативний. І це одна дія проти одного принципала, а не «акаунт безпечний».
 

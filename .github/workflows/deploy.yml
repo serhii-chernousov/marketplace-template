@@ -70,7 +70,8 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-      - uses: ./.github/actions/kind-deploy
+      - name: OIDC gate, vault login, kind, pulumi preview + cost gate, pulumi up, demo:rollout
+        uses: ./.github/actions/kind-deploy
         with:
           image: ${{ needs.resolve.outputs.image }}
           vault-env: ${{ vars.INFISICAL_ENV || 'dev' }}

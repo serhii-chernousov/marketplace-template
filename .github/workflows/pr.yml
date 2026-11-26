@@ -203,7 +203,8 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-      - uses: ./.github/actions/kind-deploy
+      - name: OIDC gate, vault login, kind, pulumi preview + cost gate, pulumi up, demo:rollout
+        uses: ./.github/actions/kind-deploy
         with:
           image: ${{ env.IMAGE_REPO }}@${{ needs.build.outputs.digest }}
           cost-bypass: ${{ contains(github.event.pull_request.labels.*.name, 'cost-approved') }}

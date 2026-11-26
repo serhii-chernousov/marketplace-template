@@ -1,0 +1,282 @@
+name: pr
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  IMAGE_REPO: ghcr.io/serhii-chernousov/marketplace-api
+  HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
+jobs:
+  quality:
+    name: 'gate 1: types and style'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: tsc --noEmit and eslint
+        run: npm run gate:types
+      - name: Formatting
+        run: npm run format:check
+      - name: OpenAPI lint
+        run: npm run lint:openapi
+      - name: .env.example matches the config schema
+        run: npm run check:env
+      - name: Unit tests
+        run: npm run test:unit
+      - name: Build
+        run: npm run build
+
+  contract:
+    name: 'gate 2: contract'
+    runs-on: ubuntu-latest
+    env:
+      PACT_BROKER_URL: ${{ secrets.PACT_BROKER_URL }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: oasdiff breaking changes against the base branch
+        env:
+          BASE_REF: origin/${{ github.base_ref || 'main' }}
+        run: npm run gate:contract
+      - name: Generate consumer contract (Pact)
+        run: npm run test:contract
+      - name: Publish contract to Pact Broker
+        if: env.PACT_BROKER_URL != ''
+        env:
+          PACT_BROKER_TOKEN: ${{ secrets.PACT_BROKER_TOKEN }}
+          PACT_CONSUMER_VERSION: ${{ env.HEAD_SHA }}
+        run: node scripts/publish-pact.mjs
+      - name: Verify provider
+        env:
+          PACT_BROKER_TOKEN: ${{ secrets.PACT_BROKER_TOKEN }}
+          PACT_PROVIDER_VERSION: ${{ env.HEAD_SHA }}
+          PACT_CONSUMER_VERSION: ${{ env.HEAD_SHA }}
+        run: npm run verify:provider
+
+  arch:
+    name: 'gate 3: module boundaries'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: dependency-cruiser
+        run: npm run gate:arch
+
+  workflows:
+    name: actionlint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: actionlint
+        run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.7 -color
+
+  integration:
+    name: integration and e2e
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      # Twice in a row: the second run proves the tests clean up after themselves.
+      - name: Integration tests against Postgres (run 1)
+        run: npm run test:integration
+      - name: Integration tests against Postgres (run 2)
+        run: npm run test:integration
+      - name: E2E (Postgres + RabbitMQ in containers)
+        run: npm run test:e2e
+
+  build:
+    name: build and push (the only build)
+    needs: [quality, contract, arch, workflows, integration]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image-ref: ${{ steps.ref.outputs.image-ref }}
+      digest: ${{ steps.push.outputs.digest }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: ref
+        run: echo "image-ref=$IMAGE_REPO:$HEAD_SHA" >> "$GITHUB_OUTPUT"
+      - id: push
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: docker/Dockerfile
+          push: true
+          provenance: false
+          tags: |
+            ${{ steps.ref.outputs.image-ref }}
+            ${{ env.IMAGE_REPO }}:${{ github.sha }}
+          # No private registry yet: the build secret is a placeholder that must not reach the image.
+          secrets: npm_token=ci-placeholder
+      - name: Record this build
+        env:
+          IMAGE_REF: ${{ steps.ref.outputs.image-ref }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) run=$GITHUB_RUN_ID ref=$IMAGE_REF digest=$DIGEST" >> build.log
+          cat build.log
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: build-log
+          path: build.log
+
+  scan:
+    name: 'gate 4: image scan'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      exit: ${{ steps.scan.outputs.exit }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: scan
+        name: Trivy with threshold
+        env:
+          IMG: ${{ env.IMAGE_REPO }}@${{ needs.build.outputs.digest }}
+          SCAN_MAX: '20'
+        run: |
+          docker pull -q "$IMG"
+          set +e
+          npm run scan
+          rc=$?
+          set -e
+          echo "exit=$rc" >> "$GITHUB_OUTPUT"
+          exit "$rc"
+
+  deploy:
+    name: deploy to kind and roll out under load
+    needs: [build, scan]
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    environment: pr
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      EVIDENCE_DIR: /tmp/ci-evidence
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+          cache: npm
+      - name: OIDC gate, vault login, kind, pulumi preview + cost gate, pulumi up, demo:rollout
+        uses: ./.github/actions/kind-deploy
+        with:
+          image: ${{ env.IMAGE_REPO }}@${{ needs.build.outputs.digest }}
+          cost-bypass: ${{ contains(github.event.pull_request.labels.*.name, 'cost-approved') }}
+          vault-env: ${{ vars.INFISICAL_ENV || 'dev' }}
+          infisical-identity-id: ${{ vars.INFISICAL_IDENTITY_ID }}
+          infisical-project-id: ${{ vars.INFISICAL_PROJECT_ID }}
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: deploy-partial
+          path: /tmp/ci-evidence
+          if-no-files-found: ignore
+
+  evidence:
+    name: pipeline-evidence
+    needs: [build, scan, deploy]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        continue-on-error: true
+        with:
+          name: build-log
+          path: in/build
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        continue-on-error: true
+        with:
+          name: deploy-partial
+          path: in/deploy
+      - name: Assemble evidence.txt from outputs and files
+        env:
+          IMAGE_REF: ${{ needs.build.outputs.image-ref }}
+          BUILT_DIGEST: ${{ needs.build.outputs.digest }}
+          SCAN_EXIT: ${{ needs.scan.outputs.exit }}
+        run: |
+          mkdir -p out
+          for f in deployment.json plan.json rollout.txt; do
+            [ -f "in/deploy/$f" ] && cp "in/deploy/$f" out/
+          done
+          [ -f in/build/build.log ] && cp in/build/build.log out/
+          touch out/build.log
+
+          kv() { awk -F= -v k="$1" '$1==k { sub(/^[^=]*=/, ""); v=$0 } END { print v }' "$2" 2>/dev/null; }
+          deployed=""
+          if [ -f out/deployment.json ]; then
+            deployed=$(jq -r '.spec.template.spec.containers[0].image | split("@")[1] // ""' out/deployment.json)
+          fi
+
+          {
+            echo "run-id=$GITHUB_RUN_ID"
+            echo "head-sha=$HEAD_SHA"
+            echo "image-ref=$IMAGE_REF"
+            echo "built-digest=$BUILT_DIGEST"
+            echo "deployed-digest=$deployed"
+            echo "build-invocations=$(wc -l < out/build.log | tr -d ' ')"
+            echo "creds-source=oidc"
+            echo "oidc-iss=$(kv oidc-iss in/deploy/oidc.txt)"
+            echo "oidc-aud=$(kv oidc-aud in/deploy/oidc.txt)"
+            echo "oidc-sub=$(kv oidc-sub in/deploy/oidc.txt)"
+            echo "oidc-sig-verified=$(kv sig-verified in/deploy/oidc.txt)"
+            echo "oidc-policy-allow=$(kv policy-allow in/deploy/oidc.txt)"
+            echo "rollout-requests=$(kv requests out/rollout.txt)"
+            echo "rollout-ok=$(kv ok out/rollout.txt)"
+            echo "rollout-failed=$(kv failed out/rollout.txt)"
+            echo "rollout-seconds=$(kv rollout-seconds out/rollout.txt)"
+            echo "secret-in-manifest=$(kv secret-in-manifest in/deploy/secret-counts.txt)"
+            echo "secret-in-plan=$(kv secret-in-plan in/deploy/secret-counts.txt)"
+            echo "gate-scan-exit=$SCAN_EXIT"
+          } > out/evidence.txt
+          cat out/evidence.txt
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pipeline-evidence
+          path: out/

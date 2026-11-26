@@ -10,3 +10,4 @@ infra/node_modules
 infra/package-lock.json
 .pulumi
 evidence
+gates/fixtures

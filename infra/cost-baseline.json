@@ -1,0 +1,4 @@
+{
+  "monthlyUsd": 9.11,
+  "source": "pulumi preview --json of infra/ on hw-32, see README CI/CD"
+}

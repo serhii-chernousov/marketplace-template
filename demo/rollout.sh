@@ -10,6 +10,7 @@ source scripts/wait-settled.sh
 CLUSTER=${CLUSTER:-hw28}
 PROFILE="${PROFILE:-correct}"
 MIN_REQUESTS="${MIN_REQUESTS:-6000}"
+MIN_OK_REQUESTS="${MIN_OK_REQUESTS:-5000}"
 LOAD_PATH="${LOAD_PATH:-/health}"
 NS=marketplace
 DEPLOY=marketplace-api
@@ -37,7 +38,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-if ! docker exec "$CLUSTER-control-plane" crictl inspecti "docker.io/library/$IMG" >/dev/null 2>&1; then
+# A registry reference by digest is pulled by the kind node itself; only local tags must be preloaded.
+if [[ "$IMG" != *@sha256:* ]] && ! docker exec "$CLUSTER-control-plane" crictl inspecti "docker.io/library/$IMG" >/dev/null 2>&1; then
 	echo "image $IMG is not loaded into kind; run npm run image:build && npm run cluster:up" >&2
 	exit 1
 fi
@@ -92,6 +94,6 @@ echo "migrations-applied=$(kubectl -n marketplace-data exec postgres-0 -- \
 	echo "failed-${code//:/-}=$count"
 done
 
-if [ "$PROFILE" = "correct" ] && { [ "$failed" -ne 0 ] || [ "$requests" -lt 5000 ]; }; then
+if [ "$PROFILE" = "correct" ] && { [ "$failed" -ne 0 ] || [ "$requests" -lt "$MIN_OK_REQUESTS" ]; }; then
 	exit 1
 fi

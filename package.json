@@ -51,6 +51,12 @@
     "verify:provider": "jest --config jest.config.js --testPathPatterns=test/contract/provider --runInBand",
     "image:build": "bash scripts/image-build.sh",
     "scan": "node scripts/scan.mjs",
+    "gate:types": "tsc --noEmit -p tsconfig.spec.json && eslint src test",
+    "gate:contract": "bash scripts/gates/contract.sh",
+    "gate:arch": "depcruise src --config .dependency-cruiser.cjs",
+    "gate:cost": "tsx scripts/cost-gate.ts",
+    "demo:gates": "bash scripts/demo-gates.sh",
+    "demo:oidc": "node scripts/demo-oidc.mjs",
     "cluster:up": "bash scripts/cluster-up.sh",
     "cluster:down": "kind delete cluster --name hw28",
     "up": "bash scripts/with-secrets.sh dev bash scripts/deploy.sh",
@@ -104,6 +110,7 @@
     "zod": "^4.5.4"
   },
   "devDependencies": {
+    "@eslint/js": "10.0.1",
     "@nestjs/cli": "^11.0.10",
     "@nestjs/testing": "^11.2.7",
     "@pact-foundation/pact": "^17.1.4",
@@ -114,12 +121,17 @@
     "@types/node": "^22.17.2",
     "@types/pg": "^8.23.1",
     "@types/supertest": "^7.2.1",
+    "dependency-cruiser": "18.9.0",
     "dotenv": "^16.6.1",
+    "eslint": "10.15.0",
     "jest": "^30.5.2",
+    "jose": "6.2.18",
     "prettier": "^3.9.6",
     "supertest": "^7.3.0",
     "testcontainers": "^12.2.0",
     "ts-jest": "^29.4.14",
-    "typescript": "^5.9.2"
+    "tsx": "4.23.15",
+    "typescript": "^5.9.2",
+    "typescript-eslint": "8.74.0"
   }
 }

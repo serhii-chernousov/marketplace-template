@@ -1,6 +1,6 @@
 # Marketplace API — курсовий проєкт Node.js PRO
 
-Backend маркетплейсу на NestJS: покупець оформлює замовлення на товари продавця, система резервує товар і кошти, підтверджує оплату у фоні через RabbitMQ і повідомляє власника замовлення наживо. Проєкт зібраний із проєктних ДЗ курсу; що звідки і чим замінено — у таблиці [Блок → шлях](#блок--шлях--чим-замінено).
+Backend маркетплейсу на NestJS: покупець оформлює замовлення на товари продавця, система резервує товар і кошти, підтверджує оплату у фоні через RabbitMQ і повідомляє власника замовлення наживо. Проєкт зібраний із проєктних ДЗ курсу; що звідки і чим замінено — у таблиці [Блок → шлях](#блок--шлях--чим-замінено). Прогони CI/CD, скріншоти Grafana і Jaeger, логи з `trace_id` — у розділі [Докази для здачі](#докази-для-здачі).
 
 ## Швидкий старт для рев'юера
 
@@ -50,6 +50,60 @@ npm run demo:race
 ```
 
 Messaging-демо (`demo:outbox`, `demo:crash-write`, `demo:crash-relay`, `demo:duplicate`, `demo:dlq`, `demo:publish`) самі скидають черги й запускають власні relay і consumer. Живий consumer API забрав би їхні повідомлення, тож скрипт відмовляється стартувати (exit 2), поки він підключений. Перед ними: `MESSAGING_ENABLED=0 docker compose up -d --wait api`, після — `docker compose up -d --wait api`.
+
+## Докази для здачі
+
+### Конвеєр
+
+| Що                                                       | Прогін                                                                                                 |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `pr.yml`: гейти, тести, одна збірка, скан, деплой у kind | [45844483061](https://github.com/serhii-chernousov/marketplace-template/actions/runs/45844483061) ✅   |
+| `deploy.yml`: promote того самого digest у `prod` (kind) | [45842766143](https://github.com/serhii-chernousov/marketplace-template/actions/runs/45842766143) ✅   |
+| Кожен гейт каже «ні» на зламаному вході                  | `npm run demo:gates` (розділ [ДЗ #32 — CI/CD](#дз-32--cicd)): `<сходинка>-ok=0`, `<сходинка>-broken≠0` |
+
+Рядки з логу `deploy.yml` (джоба `deploy to kind and roll out under load`):
+
+```text
+oidc-sub=repo:serhii-chernousov@198785733/marketplace-template@1347460702:environment:prod
+sig-verified=1
+policy-allow=1
+plan-usd=9.11 budget-usd=19.11 gate=pass
+secret-in-plan=0 secret-in-manifest=0
+image=ghcr.io/serhii-chernousov/marketplace-api@sha256:cec48cfd1b56a3bc7caea0db640bfe1d6961a9d753c9705eece51bea09602ded
+migrations-applied=9 migrate-seconds=3
+rollout-seconds=17 requests=5945 ok=5945 failed=0
+```
+
+### Моніторинг: Grafana RED
+
+Дашборд `observability/grafana/dashboards/red.json` під навантаженням зі збоями, інʼєкованими через `x-fault: 500` (`FAULT_INJECTION=1`): rate по маршрутах, частка 5xx на `/v1/orders`, p95 тривалості.
+
+![Grafana: RED-дашборд](docs/screenshots/grafana-red.png)
+
+### Трейси: Jaeger
+
+Пошук `POST /v1/orders`: трейси з помилками позначені червоним.
+
+![Jaeger: пошук трейсів](docs/screenshots/jaeger-search.png)
+
+Трейс `7e0763b…` з 500: checkout пише рядки замовлення й outbox (`pg.query:INSERT`), збій перериває бізнес-запис, транзакція відкочується (`pg.query:ROLLBACK`).
+
+![Jaeger: трейс запиту з 500](docs/screenshots/jaeger-trace-500.png)
+
+### Логи: той самий `trace_id`
+
+```bash
+docker compose logs api --no-log-prefix | grep 7e0763b0bcefc671b5eaa6ee95e1a339 \
+  | jq -c '{level,layer,trace_id,idempotencyKey,msg,status:.res.statusCode,err:.err.type} | with_entries(select(.value!=null))'
+```
+
+```text
+{"level":30,"layer":"orders.controller","trace_id":"7e0763b0bcefc671b5eaa6ee95e1a339","idempotencyKey":"shot-1795704947541","msg":"create order"}
+{"level":50,"layer":"http.errors","trace_id":"7e0763b0bcefc671b5eaa6ee95e1a339","idempotencyKey":"shot-1795704947541","msg":"request failed","err":"OutboxWriteAbortedError"}
+{"level":30,"layer":"http","trace_id":"7e0763b0bcefc671b5eaa6ee95e1a339","idempotencyKey":"shot-1795704947541","msg":"request completed","status":500}
+```
+
+Від рядка логу до трейсу — один ключ: `trace_id` з логу відкриває той самий трейс у Jaeger (`http://localhost:22904/trace/<trace_id>`).
 
 ## Архітектурна записка
 

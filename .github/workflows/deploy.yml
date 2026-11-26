@@ -1,0 +1,84 @@
+name: deploy
+
+# Promotes the digest the PR pipeline built and tested; nothing is rebuilt here.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      image:
+        description: 'Image pinned by digest (ghcr.io/...@sha256:...). Empty: the image built for the PR merged into this commit.'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-main
+  cancel-in-progress: false
+
+env:
+  IMAGE_REPO: ghcr.io/serhii-chernousov/marketplace-api
+
+jobs:
+  resolve:
+    name: resolve the PR digest
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+      packages: read
+    outputs:
+      image: ${{ steps.find.outputs.image }}
+    steps:
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: find
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED: ${{ inputs.image }}
+        run: |
+          if [ -n "$REQUESTED" ]; then
+            image="$REQUESTED"
+          else
+            head=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" --jq '.[0].head.sha // empty')
+            [ -n "$head" ] || { echo "no merged PR for $GITHUB_SHA; dispatch with an explicit image" >&2; exit 1; }
+            digest=$(docker buildx imagetools inspect "$IMAGE_REPO:$head" --format '{{.Manifest.Digest}}')
+            image="$IMAGE_REPO@$digest"
+          fi
+          [[ "$image" == *@sha256:* ]] || { echo "image must be pinned by digest: $image" >&2; exit 1; }
+          echo "image=$image" | tee -a "$GITHUB_OUTPUT"
+
+  deploy:
+    name: deploy to kind and roll out under load
+    needs: resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    environment: prod
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      EVIDENCE_DIR: /tmp/ci-evidence
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: ./.github/actions/kind-deploy
+        with:
+          image: ${{ needs.resolve.outputs.image }}
+          vault-env: ${{ vars.INFISICAL_ENV || 'dev' }}
+          infisical-identity-id: ${{ vars.INFISICAL_IDENTITY_ID }}
+          infisical-project-id: ${{ vars.INFISICAL_PROJECT_ID }}
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: deploy-evidence
+          path: /tmp/ci-evidence
+          if-no-files-found: ignore

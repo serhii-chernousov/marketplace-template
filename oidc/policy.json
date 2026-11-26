@@ -1,0 +1,8 @@
+{
+  "issuer": "https://token.actions.githubusercontent.com",
+  "audience": "marketplace-ci",
+  "subjects": [
+    "repo:serhii-chernousov/marketplace-template:environment:pr",
+    "repo:serhii-chernousov/marketplace-template:environment:prod"
+  ]
+}

@@ -1,0 +1,128 @@
+name: kind-deploy
+description: >
+  OIDC gate, vault login, kind cluster, Pulumi preview with the cost gate,
+  pulumi up of one image digest, and demo:rollout under load.
+  The calling job needs permissions id-token write.
+
+inputs:
+  image:
+    description: Image reference pinned by digest (registry/repo@sha256:...)
+    required: true
+  cost-bypass:
+    description: "'true' when the PR carries the cost bypass label"
+    required: false
+    default: 'false'
+  vault-env:
+    description: Infisical environment slug
+    required: false
+    default: dev
+  infisical-identity-id:
+    description: Infisical machine identity that trusts GitHub OIDC
+    required: true
+  infisical-project-id:
+    description: Infisical project holding the application secrets
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: OIDC gate (signature via jwks_uri, then iss/aud/sub policy)
+      shell: bash
+      run: |
+        mkdir -p "$EVIDENCE_DIR"
+        curl -sSf -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+          "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$(jq -r .audience oidc/policy.json)" \
+          | jq -r .value > "$RUNNER_TEMP/oidc.jwt"
+        node scripts/oidc-gate.mjs --token-file "$RUNNER_TEMP/oidc.jwt" --policy oidc/policy.json \
+          | tee "$EVIDENCE_DIR/oidc.txt"
+
+    - name: Vault login with the same ID token (no stored vault credentials)
+      shell: bash
+      env:
+        INFISICAL_IDENTITY_ID: ${{ inputs.infisical-identity-id }}
+        INFISICAL_PROJECT_ID: ${{ inputs.infisical-project-id }}
+      run: |
+        npm install --global --no-audit --no-fund @infisical/cli@0.45.14 >/dev/null
+        token=$(infisical login --method=oidc-auth --machine-identity-id="$INFISICAL_IDENTITY_ID" \
+          --jwt="$(cat "$RUNNER_TEMP/oidc.jwt")" --silent --plain)
+        echo "::add-mask::$token"
+        {
+          echo "INFISICAL_TOKEN=$token"
+          echo "INFISICAL_PROJECT_ID=$INFISICAL_PROJECT_ID"
+        } >> "$GITHUB_ENV"
+        rm -f "$RUNNER_TEMP/oidc.jwt"
+
+    - name: Install Pulumi CLI
+      uses: pulumi/actions@0ce33695f880624d4f27bd6db25e680c7df4d551 # v7.2.0
+      with:
+        pulumi-version: 3.276.0
+
+    - name: Install dependencies
+      shell: bash
+      run: |
+        npm ci --no-audit --no-fund
+        npm --prefix infra ci --no-audit --no-fund
+
+    - name: kind cluster (the app image is pulled by digest from the registry)
+      shell: bash
+      env:
+        IMG: ${{ inputs.image }}
+      run: |
+        kind version
+        npm run cluster:up
+
+    - name: Platform stack (Postgres, Redis, RabbitMQ, MinIO)
+      shell: bash
+      env:
+        VAULT_ENV: ${{ inputs.vault-env }}
+      run: bash scripts/with-secrets.sh "$VAULT_ENV" bash scripts/pulumi.sh platform up --yes --skip-preview
+
+    - name: pulumi preview --json
+      shell: bash
+      env:
+        IMG: ${{ inputs.image }}
+        VAULT_ENV: ${{ inputs.vault-env }}
+      run: |
+        vault() { bash scripts/with-secrets.sh "$VAULT_ENV" "$@"; }
+        vault bash scripts/pulumi.sh app config set image "$IMG"
+        vault bash scripts/pulumi.sh app config set rev "$IMG"
+        vault bash scripts/pulumi.sh app preview --json > "$EVIDENCE_DIR/plan.json"
+        jq -r '.steps[] | "\(.op) \(.newState.type // .oldState.type)"' "$EVIDENCE_DIR/plan.json"
+
+    - name: Cost gate
+      shell: bash
+      env:
+        COST_BYPASS: ${{ inputs.cost-bypass }}
+      run: |
+        PLAN_JSON="$EVIDENCE_DIR/plan.json" npm run gate:cost \
+          || { [ "$COST_BYPASS" = "true" ] && echo "cost-bypass=label"; }
+
+    - name: pulumi up
+      shell: bash
+      env:
+        VAULT_ENV: ${{ inputs.vault-env }}
+      run: |
+        bash scripts/with-secrets.sh "$VAULT_ENV" bash scripts/pulumi.sh app up --yes --skip-preview
+        kubectl -n marketplace rollout status deploy/marketplace-api --timeout=300s
+        kubectl -n marketplace get deploy marketplace-api -o json > "$EVIDENCE_DIR/deployment.json"
+        kubectl -n marketplace get pods -l app=marketplace-api -o jsonpath='{range .items[*]}{.status.containerStatuses[0].imageID}{"\n"}{end}'
+
+    - name: Application secrets reached the pod by reference, not by value
+      shell: bash
+      env:
+        VAULT_ENV: ${{ inputs.vault-env }}
+      run: |
+        manifest=$(bash scripts/with-secrets.sh "$VAULT_ENV" node scripts/ci/count-secret-occurrences.mjs "$EVIDENCE_DIR/deployment.json")
+        plan=$(bash scripts/with-secrets.sh "$VAULT_ENV" node scripts/ci/count-secret-occurrences.mjs "$EVIDENCE_DIR/plan.json")
+        echo "secret-in-manifest=$manifest" | tee "$EVIDENCE_DIR/secret-counts.txt"
+        echo "secret-in-plan=$plan" | tee -a "$EVIDENCE_DIR/secret-counts.txt"
+        [ "$manifest" = 0 ] && [ "$plan" = 0 ]
+
+    - name: demo:rollout under load (failed must be 0)
+      shell: bash
+      env:
+        IMG: ${{ inputs.image }}
+        VAULT_ENV: ${{ inputs.vault-env }}
+        MIN_REQUESTS: '2000'
+        MIN_OK_REQUESTS: '2000'
+      run: bash scripts/with-secrets.sh "$VAULT_ENV" bash demo/rollout.sh 2>&1 | tee "$EVIDENCE_DIR/rollout.txt"

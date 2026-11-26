@@ -4,11 +4,16 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-ENV_SLUG="${1:-dev}"; shift || true
+ENV_SLUG="${VAULT_ENV:-${1:-dev}}"; shift || true
 [ "$#" -gt 0 ] || set -- npm run start
 
 # грейдер не має доступу до сховища: значення вже в оточенні
 if [ "${SKIP_VAULT:-0}" = "1" ]; then exec "$@"; fi
+
+# CI: a machine-identity token obtained via OIDC; no credentials file on the runner.
+if [ -n "${INFISICAL_TOKEN:-}" ]; then
+	exec infisical run --projectId "$INFISICAL_PROJECT_ID" --env="$ENV_SLUG" -- "$@"
+fi
 
 CREDS="$ROOT/.secrets/infisical.env"
 

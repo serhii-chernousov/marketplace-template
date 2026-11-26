@@ -12,7 +12,6 @@ on:
         default: network
 
 permissions:
-  id-token: write
   contents: read
 
 concurrency:
@@ -23,6 +22,9 @@ jobs:
   teardown:
     runs-on: ubuntu-latest
     timeout-minutes: 55
+    permissions:
+      id-token: write
+      contents: read
     env:
       SCOPE: ${{ inputs.scope || 'demo' }}
       DEMO_STACK: ${{ vars.PULUMI_ORG }}/hw31-demo/demo

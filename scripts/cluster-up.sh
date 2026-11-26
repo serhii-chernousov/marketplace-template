@@ -17,10 +17,15 @@ if ! kind get clusters 2>/dev/null | grep -qx "$CLUSTER"; then
 	kind create cluster --config <(sed "s|\${CLUSTER:-hw28}|$CLUSTER|g" k8s/kind-config.yaml) --wait 90s
 fi
 
-docker image inspect "$IMG" >/dev/null 2>&1 || {
-	echo "image $IMG not built; run npm run image:build first" >&2
-	exit 1
-}
+REMOTE_APP_IMAGE=0
+[[ "$IMG" == *@sha256:* ]] && REMOTE_APP_IMAGE=1
+
+if [ "$REMOTE_APP_IMAGE" = 0 ]; then
+	docker image inspect "$IMG" >/dev/null 2>&1 || {
+		echo "image $IMG not built; run npm run image:build first" >&2
+		exit 1
+	}
+fi
 
 case "$(docker exec "$CLUSTER-control-plane" uname -m)" in
 	aarch64 | arm64) PLATFORM=linux/arm64 ;;
@@ -34,7 +39,8 @@ load() {
 		docker exec -i "$CLUSTER-control-plane" ctr -n k8s.io images import - >/dev/null
 }
 
-load "$IMG"
+# A digest reference lives in a registry; the kind node pulls exactly those bytes itself.
+[ "$REMOTE_APP_IMAGE" = 1 ] || load "$IMG"
 for image in "${DEPENDENCY_IMAGES[@]}"; do
 	docker image inspect "$image" >/dev/null 2>&1 || docker pull -q --platform "$PLATFORM" "$image" >/dev/null
 	load "$image"

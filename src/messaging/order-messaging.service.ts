@@ -37,6 +37,7 @@ export class OrderMessagingService
 	private relayTimer?: NodeJS.Timeout
 	private reconnectTimer?: NodeJS.Timeout
 	private stopped = false
+	private relayStarted = false
 	private readonly relay: OutboxRelay
 	private readonly effects: EffectStore
 
@@ -56,7 +57,6 @@ export class OrderMessagingService
 		}
 		// Not awaited: the API must boot and serve reads while the broker is down.
 		void this.connectConsumer()
-		this.scheduleRelay()
 	}
 
 	async onModuleDestroy(): Promise<void> {
@@ -73,6 +73,9 @@ export class OrderMessagingService
 			const connection = await connectBroker()
 			const channel = await createChannel(connection)
 			await assertTopology(channel)
+			// Publishing before the queue is bound drops the event while the
+			// outbox row is still marked published, so the relay waits for this.
+			this.startRelayOnce()
 			connection.on('close', () => this.scheduleReconnect())
 			connection.on('error', (err: unknown) =>
 				log.warn({ err }, 'broker connection error'),
@@ -105,6 +108,14 @@ export class OrderMessagingService
 	private onPaid(event: OrderPlacedEvent): void {
 		log.info({ orderId: event.orderId, eventId: event.eventId }, 'order paid')
 		this.orderEvents.publish(event.orderId, 'paid')
+	}
+
+	private startRelayOnce(): void {
+		if (this.relayStarted) {
+			return
+		}
+		this.relayStarted = true
+		this.scheduleRelay()
 	}
 
 	private scheduleRelay(): void {

@@ -1420,24 +1420,24 @@ integration + e2e                                                    ─┘   di
 | -------------------------- | ----------------------------------------------------------- |
 | `INFISICAL_IDENTITY_ID`    | machine identity, якій Infisical видає токен за GitHub OIDC |
 | `INFISICAL_PROJECT_ID`     | проєкт Infisical із секретами застосунку                    |
-| `INFISICAL_ENV`            | слаг середовища Infisical (за замовчуванням `dev`)          |
+| `INFISICAL_ENV`            | `ci` — окреме середовище Infisical для конвеєра             |
 
 ### Змінні зі сховища
 
-Секрети застосунку живуть у сховищі з #11 і зʼявляються в момент запуску застосунку (Pulumi кладе їх у K8s Secret, под бачить `envFrom.secretRef`), а не в момент збірки. У CI їх доставляє той самий `scripts/with-secrets.sh`: з `INFISICAL_TOKEN` у оточенні він робить `infisical run --projectId …`.
+Секрети застосунку живуть у сховищі з #11 і зʼявляються в момент запуску застосунку (Pulumi кладе їх у K8s Secret, под бачить `envFrom.secretRef`), а не в момент збірки. У CI їх доставляє той самий `scripts/with-secrets.sh`: з `INFISICAL_TOKEN` у оточенні він робить `infisical run --projectId …`. Конвеєр читає окреме середовище `ci` зі своїми значеннями (кластер у раннері одноразовий, з `dev` вони не збігаються), і identity `github-ci` має доступ лише до нього: ключі з `dev` (AWS із #31, токен Pulumi Cloud) у процес конвеєра не потрапляють.
 
-| Змінна                     | Джерело                             | Де потрібна в конвеєрі                       |
-| -------------------------- | ----------------------------------- | -------------------------------------------- |
-| `DB_PASSWORD`              | сховище (#11), Infisical через OIDC | platform/app `pulumi up`, `demo:rollout`     |
-| `REDIS_PASSWORD`           | сховище (#11), Infisical через OIDC | platform/app `pulumi up`                     |
-| `BROKER_PASSWORD`          | сховище (#11), Infisical через OIDC | platform/app `pulumi up`                     |
-| `STORAGE_ACCESS_KEY`       | сховище (#11), Infisical через OIDC | platform/app `pulumi up`                     |
-| `STORAGE_SECRET_KEY`       | сховище (#11), Infisical через OIDC | platform/app `pulumi up`                     |
-| `JWT_PRIVATE_KEY`          | сховище (#11), Infisical через OIDC | app `pulumi up`                              |
-| `JWT_PUBLIC_KEY`           | сховище (#11), Infisical через OIDC | app `pulumi up`                              |
-| `JWT_KID`                  | сховище (#11), Infisical через OIDC | app `pulumi up`                              |
-| `REFRESH_TOKEN_PEPPER`     | сховище (#11), Infisical через OIDC | app `pulumi up`                              |
-| `PULUMI_CONFIG_PASSPHRASE` | сховище (#11), Infisical через OIDC | будь-яка команда Pulumi на файловому бекенді |
+| Змінна                     | Джерело                                  | Де потрібна в конвеєрі                       |
+| -------------------------- | ---------------------------------------- | -------------------------------------------- |
+| `DB_PASSWORD`              | сховище (#11), Infisical `ci` через OIDC | platform/app `pulumi up`, `demo:rollout`     |
+| `REDIS_PASSWORD`           | сховище (#11), Infisical `ci` через OIDC | platform/app `pulumi up`                     |
+| `BROKER_PASSWORD`          | сховище (#11), Infisical `ci` через OIDC | platform/app `pulumi up`                     |
+| `STORAGE_ACCESS_KEY`       | сховище (#11), Infisical `ci` через OIDC | platform/app `pulumi up`                     |
+| `STORAGE_SECRET_KEY`       | сховище (#11), Infisical `ci` через OIDC | platform/app `pulumi up`                     |
+| `JWT_PRIVATE_KEY`          | сховище (#11), Infisical `ci` через OIDC | app `pulumi up`                              |
+| `JWT_PUBLIC_KEY`           | сховище (#11), Infisical `ci` через OIDC | app `pulumi up`                              |
+| `JWT_KID`                  | сховище (#11), Infisical `ci` через OIDC | app `pulumi up`                              |
+| `REFRESH_TOKEN_PEPPER`     | сховище (#11), Infisical `ci` через OIDC | app `pulumi up`                              |
+| `PULUMI_CONFIG_PASSPHRASE` | сховище (#11), Infisical `ci` через OIDC | будь-яка команда Pulumi на файловому бекенді |
 
 `secret-in-manifest` рахує раннер, бо значення знає лише він: `scripts/ci/count-secret-occurrences.mjs` шукає кожне значення в `deployment.json` (і заразом у `plan.json`, який теж їде в артефакт) і друкує тільки число. Ненуль — джоба червона.
 

@@ -5,7 +5,7 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-SCAN_IMG="${SCAN_IMG:-ghcr.io/serhii-chernousov/marketplace-api@sha256:REPLACE_WITH_GREEN_RUN_DIGEST}"
+SCAN_IMG="${SCAN_IMG:-ghcr.io/serhii-chernousov/marketplace-api@sha256:7a1eae37ea3002d83028ff688051836ff6c974d0971d8ceb86d45eb73e44eb09}"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 

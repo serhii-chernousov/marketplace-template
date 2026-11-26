@@ -26,6 +26,12 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Install dependencies
+      shell: bash
+      run: |
+        npm ci --no-audit --no-fund
+        npm --prefix infra ci --no-audit --no-fund
+
     - name: OIDC gate (signature via jwks_uri, then iss/aud/sub policy)
       shell: bash
       run: |
@@ -56,12 +62,6 @@ runs:
       uses: pulumi/actions@0ce33695f880624d4f27bd6db25e680c7df4d551 # v7.2.0
       with:
         pulumi-version: 3.276.0
-
-    - name: Install dependencies
-      shell: bash
-      run: |
-        npm ci --no-audit --no-fund
-        npm --prefix infra ci --no-audit --no-fund
 
     - name: kind cluster (the app image is pulled by digest from the registry)
       shell: bash

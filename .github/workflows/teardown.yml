@@ -76,7 +76,7 @@ jobs:
           set -euo pipefail
 
           state=$(pulumi stack export --stack "$DEMO_STACK" \
-            | jq '[.deployment.resources[]|select(.type|startswith("aws:"))]|length')
+            | jq '[.deployment.resources[]?|select(.type|startswith("aws:"))]|length')
 
           tagged_in() {
             aws resourcegroupstaggingapi get-resources --region "$1" \
@@ -86,11 +86,14 @@ jobs:
           tagged=0 rds=0 alb=0 nat=0 eip=0
           for R in eu-central-1 us-east-1; do
             # The tagging index lags behind deletes; give it a few minutes to catch up.
+            # With scope=demo the base network is alive on purpose, so waiting is pointless.
             t=$(tagged_in "$R")
-            for _ in $(seq 1 12); do
-              [ "$t" -eq 0 ] && break
+            tries=0
+            if [ "$SCOPE" = network ]; then tries=12; fi
+            while [ "$t" -ne 0 ] && [ "$tries" -gt 0 ]; do
               sleep 30
               t=$(tagged_in "$R")
+              tries=$((tries - 1))
             done
             r=$(aws rds describe-db-instances --region "$R" --query 'length(DBInstances)')
             a=$(aws elbv2 describe-load-balancers --region "$R" --query 'length(LoadBalancers)')

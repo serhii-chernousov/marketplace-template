@@ -1,0 +1,12 @@
+# aws pricing get-products, location=EU (Frankfurt), queried 2026-11-25T17:32Z
+alb-hour	0.0270000000	Hrs	EUC1-LoadBalancerUsage	effective=2026-11-01	published=2026-11-25
+alb-lcu	0.0080000000	LCU-Hrs	EUC1-LCUUsage	effective=2026-11-01	published=2026-11-25
+rds-t4g-micro-multi-az	0.0370000000	Hrs	EUC1-Multi-AZUsage:db.t4g.micro	effective=2026-11-01	published=2026-11-24
+rds-gp3-multi-az	0.2740000000	GB-Mo	EUC1-RDS:Multi-AZ-GP3-Storage	effective=2026-11-01	published=2026-11-24
+public-ipv4	0.0050000000	Hrs	EUC1-PublicIPv4:InUseAddress	effective=2026-11-17	published=2026-11-25
+nat-hour	0.0520000000	Hrs	EUC1-NatGateway-Hours	effective=2026-11-01	published=2026-11-24
+nat-gb	0.0520000000	GB	EUC1-NatGateway-Bytes	effective=2026-11-01	published=2026-11-24
+lambda-request-arm	0.0000002000	Requests	EUC1-Request-ARM	effective=2026-11-01	published=2026-11-20
+lambda-gb-second-arm	0.0000106667	Lambda-GB-Second	EUC1-Lambda-GB-Second-ARM	effective=2026-11-01	published=2026-11-20
+lambda-gb-second-arm	0.0000133334	Lambda-GB-Second	EUC1-Lambda-GB-Second-ARM	effective=2026-11-01	published=2026-11-20
+lambda-gb-second-arm	0.0000120001	Lambda-GB-Second	EUC1-Lambda-GB-Second-ARM	effective=2026-11-01	published=2026-11-20

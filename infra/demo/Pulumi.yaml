@@ -1,0 +1,7 @@
+name: hw31-demo
+description: 'Hourly-billed layer that lives only while measuring: RDS Multi-AZ, ALB, optional NAT.'
+runtime:
+  name: nodejs
+  options:
+    packagemanager: npm
+main: index.ts

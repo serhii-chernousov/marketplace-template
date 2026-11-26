@@ -1,0 +1,17 @@
+{
+  "name": "hw31-base",
+  "private": true,
+  "description": "Always-on AWS layer: budget, network, security groups, CI identity",
+  "main": "index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@pulumi/aws": "7.54.0",
+    "@pulumi/pulumi": "3.276.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "typescript": "5.9.2"
+  }
+}

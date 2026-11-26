@@ -57,7 +57,7 @@ Messaging-демо (`demo:outbox`, `demo:crash-write`, `demo:crash-relay`, `demo
 
 | Що                                                       | Прогін                                                                                                 |
 | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `pr.yml`: гейти, тести, одна збірка, скан, деплой у kind | [45800839676](https://github.com/serhii-chernousov/marketplace-template/actions/runs/45800839676) ✅   |
+| `pr.yml`: гейти, тести, одна збірка, скан, деплой у kind | [45844483061](https://github.com/serhii-chernousov/marketplace-template/actions/runs/45844483061) ✅   |
 | `deploy.yml`: promote того самого digest у `prod` (kind) | [45842766143](https://github.com/serhii-chernousov/marketplace-template/actions/runs/45842766143) ✅   |
 | Кожен гейт каже «ні» на зламаному вході                  | `npm run demo:gates` (розділ [ДЗ #32 — CI/CD](#дз-32--cicd)): `<сходинка>-ok=0`, `<сходинка>-broken≠0` |
 
